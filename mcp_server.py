@@ -334,18 +334,17 @@ class StockValuationMCP:
             return f"❌ {result['symbol']}: {result['error']}"
         
         response = f"✅ {result['symbol']} ({result.get('name', 'N/A')}) 估值结果：\n"
-        response += f"当前价格: ${result['current_price']:.2f}\n"
-        response += f"内在价值: ${result['intrinsic_value']:.2f}\n"
-        response += f"涨跌幅: {result['upside_downside']:+.1%}\n"
-        response += f"IRR: {result['irr']:.1%}" if result['irr'] else "IRR: N/A"
-        response += f"\n评估结果: {result['evaluation']}\n"
+        response += f"- 当前价格：${result['current_price']:.2f}\n"
+        response += f"- 内在价值：${result['intrinsic_value']:.2f}\n"
+        response += f"- 涨跌幅空间：{result['upside_downside']:+.1%}\n"
+        response += f"- 内部收益率（IRR）：{result['irr']:.1%}" if result['irr'] else "- 内部收益率（IRR）：N/A"
+        response += f"\n- 评估结论：{result['evaluation']}\n"
         
-        response += f"\n估值参数：\n"
-        response += f"  折现率 (WACC): {result['wacc']:.2%}\n"
-        response += f"  增长率: {result['growth_rate']:.2%}\n"
-        response += f"  最新FCF: ${result['latest_fcf']:,}\n"
-        response += f"  行业: {result.get('damodaran_industry', 'N/A')}\n"
-        response += f"  映射来源: {result.get('mapping_source', 'N/A')}"
+        response += f"\n主要估值参数：\n"
+        response += f"- 折现率（WACC）：{result['wacc']:.2%}\n"
+        response += f"- 永续增长率：{result['perpetual_growth_rate']:.2%}\n"
+        response += f"- 最新自由现金流（FCF）：${result['latest_fcf']:,.2f}\n"
+        response += f"- 行业属性：{result.get('damodaran_industry', 'N/A')}"
         
         return response
     
@@ -363,6 +362,7 @@ class StockValuationMCP:
                 response += f"   涨跌幅: {result['upside_downside']:+.1%}\n"
                 response += f"   IRR: {result['irr']:.1%}" if result['irr'] else "   IRR: N/A"
                 response += f"\n   评估: {result['evaluation']}\n"
+                response += f"   WACC: {result['wacc']:.2%}, 永续增长率: {result['perpetual_growth_rate']:.2%}\n"
             response += "-" * 40 + "\n"
         
         return response

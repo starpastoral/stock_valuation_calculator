@@ -127,37 +127,7 @@ class StockDataFetcher:
             logger.error(f"计算 {symbol} 自由现金流失败: {e}")
             return None
     
-    def calculate_growth_rate(self, symbol):
-        """计算历史现金流增长率"""
-        try:
-            fcf = self.calculate_free_cash_flow(symbol)
-            if fcf is None or len(fcf) < 2:
-                return None
-            
-            # 计算年度增长率
-            growth_rates = []
-            for i in range(len(fcf) - 1):
-                current = fcf.iloc[i]
-                previous = fcf.iloc[i + 1]
-                
-                if previous > 0:
-                    growth_rate = (current - previous) / previous
-                    growth_rates.append(growth_rate)
-            
-            if not growth_rates:
-                return None
-            
-            # 返回简单平均增长率
-            avg_growth_rate = np.mean(growth_rates)
-            
-            # 限制增长率在合理范围内
-            avg_growth_rate = max(-0.5, min(1.0, avg_growth_rate))
-            
-            return avg_growth_rate
-            
-        except Exception as e:
-            logger.error(f"计算 {symbol} 增长率失败: {e}")
-            return None
+
     
     def get_shares_outstanding(self, symbol):
         """获取流通股数"""
@@ -191,10 +161,7 @@ class StockDataFetcher:
         if fcf is None:
             return {"error": "无法计算自由现金流"}
         
-        # 获取增长率
-        growth_rate = self.calculate_growth_rate(symbol)
-        if growth_rate is None:
-            return {"error": "无法计算增长率"}
+
         
         # 获取流通股数
         shares_outstanding = self.get_shares_outstanding(symbol)
@@ -211,7 +178,7 @@ class StockDataFetcher:
             'currency': stock_info['currency'],
             'free_cash_flow': fcf.to_dict(),
             'latest_fcf': fcf.iloc[0],
-            'growth_rate': growth_rate,
+
             'shares_outstanding': shares_outstanding,
             'data_date': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         } 

@@ -116,16 +116,16 @@ class StockValuationAI:
 5. 更新WACC数据（每月更新）
 6. 查看行业分类信息
 
-DCF模型关键参数说明：
-- 历史/预测增长率：基于历史数据计算的增长率，用于前几年现金流预测
-- 永续增长率：固定为2.5%，仅用于终值计算，代表长期稳定增长
+DCF模型关键参数说明（标准做法）：
+- 增长率：基于历史数据计算，用于预测未来10年现金流
+- 永续增长率：固定为2.5%（名义GDP增长率），仅用于终值计算
 - 折现率(WACC)：基于达摩达兰行业数据的加权平均资本成本
 
 重要限制：
 - 你只能通过调用指定的函数来实现功能，不能自己计算或编造数据
 - 所有估值数据来自yfinance和达摩达兰WACC表
 - 你不能提供投资建议，只能提供估值分析结果
-- 不要混淆历史增长率和永续增长率，它们有不同用途
+- 采用标准DCF做法：永续增长率固定为2.5%，增长率用于预测10年现金流
 - 如果用户询问超出你能力范围的问题，请明确说明
 
 可用函数：
@@ -238,7 +238,7 @@ DCF模型关键参数说明：
                     formatted += f"   涨跌幅: {result['upside_downside']:+.1%}\n"
                     formatted += f"   IRR: {result['irr']:.1%}" if result['irr'] else "   IRR: N/A"
                     formatted += f"\n   评估: {result['evaluation']}\n"
-                    formatted += f"   WACC: {result['wacc']:.2%}, 历史增长率: {result['growth_rate']:.2%}, 永续增长率: {result['perpetual_growth_rate']:.2%}\n"
+                    formatted += f"   WACC: {result['wacc']:.2%}, 永续增长率: {result['perpetual_growth_rate']:.2%}\n"
                 formatted += "-" * 40 + "\n"
         else:
             # 单个股票的结果
@@ -251,11 +251,10 @@ DCF模型关键参数说明：
                 formatted += f"涨跌幅: {data['upside_downside']:+.1%}\n"
                 formatted += f"IRR: {data['irr']:.1%}" if data['irr'] else "IRR: N/A"
                 formatted += f"\n评估结果: {data['evaluation']}\n"
-                formatted += f"\n估值参数：\n"
-                formatted += f"  折现率 (WACC): {data['wacc']:.2%}\n"
-                formatted += f"  历史/预测增长率: {data['growth_rate']:.2%}\n"
-                formatted += f"  永续增长率 (终值计算): {data['perpetual_growth_rate']:.2%}\n"
-                formatted += f"  最新FCF: ${data['latest_fcf']:,}\n"
+                formatted += f"\n主要估值参数：\n"
+                formatted += f"  折现率（WACC）: {data['wacc']:.2%}\n"
+                formatted += f"  永续增长率: {data['perpetual_growth_rate']:.2%}\n"
+                formatted += f"  最新自由现金流（FCF）: ${data['latest_fcf']:,}\n"
         
         return formatted
     

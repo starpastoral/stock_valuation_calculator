@@ -84,7 +84,6 @@ class ReportGenerator:
         # 估值参数
         print(f"\n估值参数:")
         print(f"  折现率 (WACC): {valuation['wacc']:.2%}")
-        print(f"  增长率: {valuation['growth_rate']:.2%}")
         print(f"  永续增长率: {valuation['perpetual_growth_rate']:.2%}")
         print(f"  预测年数: {valuation['forecast_years']}年")
         
@@ -180,7 +179,6 @@ class ReportGenerator:
                 'IRR': valuation['irr'],
                 '评估结果': valuation['evaluation'],
                 '折现率': valuation['wacc'],
-                '增长率': valuation['growth_rate'],
                 '永续增长率': valuation['perpetual_growth_rate'],
                 '预测年数': valuation['forecast_years'],
                 '最新自由现金流': valuation['latest_fcf'],
