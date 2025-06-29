@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "stock-valuation-calculator": {
+      "command": "uv",
+      "args": [
+        "--directory",
+        "/Users/charleslau/stock_valuation_calculator",
+        "run",
+        "python",
+        "mcp_server.py"
+      ]
+    }
+  }
+} 

@@ -1,0 +1,21 @@
+{
+  "portfolios": {
+    "tech_stocks": {
+      "description": "科技股组合",
+      "stocks": ["AAPL", "GOOGL", "MSFT", "NVDA", "TSLA"]
+    },
+    "bank_stocks": {
+      "description": "银行股组合", 
+      "stocks": ["JPM", "BAC", "WFC", "C"]
+    },
+    "watchlist": {
+      "description": "观察清单",
+      "stocks": ["AMZN", "META", "NFLX", "AMD"]
+    }
+  },
+  "custom_industries": {
+    "AAPL": "计算机与外设",
+    "GOOGL": "互联网",
+    "MSFT": "软件（系统与应用）"
+  }
+} 
