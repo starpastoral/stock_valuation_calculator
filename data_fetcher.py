@@ -5,6 +5,7 @@ import numpy as np
 from datetime import datetime, timedelta
 import json
 import logging
+from currency_converter import CurrencyConverter
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -14,6 +15,7 @@ class StockDataFetcher:
     
     def __init__(self):
         self.cache = {}
+        self.currency_converter = CurrencyConverter()
     
     def get_stock_info(self, symbol):
         """获取股票基本信息"""
@@ -116,9 +118,20 @@ class StockDataFetcher:
                 logger.warning(f"{symbol}: 历史现金流数据不足")
                 return None
             
-            # 检查是否有负现金流
+            # 检查最近2年现金流情况
+            recent_fcf = free_cash_flow.head(2)  # 最近2年
+            if (recent_fcf <= 0).all():
+                logger.warning(f"{symbol}: 最近2年都是负自由现金流，无法估值")
+                return None
+            
+            # 如果有历史负现金流但最新年份为正，给出警告但继续
             if (free_cash_flow <= 0).any():
-                logger.warning(f"{symbol}: 存在负自由现金流")
+                negative_years = free_cash_flow[free_cash_flow <= 0]
+                logger.warning(f"{symbol}: 历史存在负自由现金流年份: {negative_years.index.year.tolist()}")
+            
+            # 确保最新年份现金流为正
+            if free_cash_flow.iloc[0] <= 0:
+                logger.warning(f"{symbol}: 最新年份现金流为负，无法估值")
                 return None
             
             return free_cash_flow
@@ -147,6 +160,8 @@ class StockDataFetcher:
             logger.error(f"获取 {symbol} 流通股数失败: {e}")
             return None
     
+
+
     def get_complete_data(self, symbol):
         """获取完整的股票数据用于估值"""
         logger.info(f"获取 {symbol} 的完整数据...")
@@ -161,7 +176,21 @@ class StockDataFetcher:
         if fcf is None:
             return {"error": "无法计算自由现金流"}
         
-
+        # 货币转换
+        latest_fcf_original = fcf.iloc[0]
+        latest_fcf_converted, target_currency, source_currency, exchange_rate = self.currency_converter.convert_financial_data(symbol, latest_fcf_original)
+        
+        # 转换所有历史自由现金流
+        fcf_converted = {}
+        for date, value in fcf.items():
+            if pd.notna(value):
+                converted_value, _, _, _ = self.currency_converter.convert_financial_data(symbol, value)
+                fcf_converted[date] = converted_value
+            else:
+                fcf_converted[date] = value
+        
+        # 获取货币信息
+        currency_info = self.currency_converter.get_currency_info(symbol)
         
         # 获取流通股数
         shares_outstanding = self.get_shares_outstanding(symbol)
@@ -175,10 +204,14 @@ class StockDataFetcher:
             'industry': stock_info['industry'],
             'current_price': stock_info['current_price'],
             'market_cap': stock_info['market_cap'],
-            'currency': stock_info['currency'],
-            'free_cash_flow': fcf.to_dict(),
-            'latest_fcf': fcf.iloc[0],
-
+            'currency': target_currency,  # 使用转换后的目标货币
+            'free_cash_flow': fcf_converted,
+            'latest_fcf': latest_fcf_converted,
+            'latest_fcf_original': latest_fcf_original,
+            'exchange_rate': exchange_rate,
+            'source_currency': source_currency,
+            'target_currency': target_currency,
+            'currency_info': currency_info,
             'shares_outstanding': shares_outstanding,
             'data_date': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         } 
