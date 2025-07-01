@@ -64,7 +64,6 @@ class DCFCalculator:
                 'symbol': stock_data['symbol'],
                 'current_price': current_price,
                 'intrinsic_value': intrinsic_value_per_share,
-                'upside_downside': (intrinsic_value_per_share - current_price) / current_price,
                 'irr': irr,
                 'wacc': wacc,
 
@@ -226,7 +225,6 @@ class DCFCalculator:
                     key = f"WACC_{wacc:.1%}_PerpGrowth_{perp_growth:.1%}"
                     sensitivity_data[key] = {
                         'intrinsic_value': result['intrinsic_value'],
-                        'upside_downside': result['upside_downside'],
                         'wacc': wacc,
                         'perpetual_growth_rate': perp_growth
                     }

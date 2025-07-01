@@ -336,7 +336,6 @@ class StockValuationMCP:
         response = f"✅ {result['symbol']} ({result.get('name', 'N/A')}) 估值结果：\n"
         response += f"- 当前价格：${result['current_price']:.2f}\n"
         response += f"- 内在价值：${result['intrinsic_value']:.2f}\n"
-        response += f"- 涨跌幅空间：{result['upside_downside']:+.1%}\n"
         response += f"- 内部收益率（IRR）：{result['irr']:.1%}" if result['irr'] else "- 内部收益率（IRR）：N/A"
         response += f"\n- 评估结论：{result['evaluation']}\n"
         
@@ -359,7 +358,6 @@ class StockValuationMCP:
                 response += f"✅ {result['symbol']} ({result.get('name', 'N/A')})\n"
                 response += f"   当前价格: ${result['current_price']:.2f}\n"
                 response += f"   内在价值: ${result['intrinsic_value']:.2f}\n"
-                response += f"   涨跌幅: {result['upside_downside']:+.1%}\n"
                 response += f"   IRR: {result['irr']:.1%}" if result['irr'] else "   IRR: N/A"
                 response += f"\n   评估: {result['evaluation']}\n"
                 response += f"   WACC: {result['wacc']:.2%}, 永续增长率: {result['perpetual_growth_rate']:.2%}\n"

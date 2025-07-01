@@ -10,21 +10,37 @@
 - **批量处理**：支持股票组合批量估值
 - **多种输出**：命令行报告和Excel报告
 - **行业映射**：智能匹配yfinance和达摩达兰行业分类
-- **自动更新**：每月自动更新WACC数据
+- **AI助手**：基于Ollama的自然语言交互界面
+- **MCP集成**：Claude Desktop直接集成支持
 
 ## 📦 安装
 
-1. 安装Python依赖：
+### 基本安装
+
+1. 确保已安装Python 3.10+和uv：
 ```bash
-pip install -r requirements.txt
+# 安装uv（如果未安装）
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# 或使用Homebrew（macOS）
+brew install uv
 ```
 
-2. 创建必要的目录：
+2. 安装项目依赖：
+```bash
+# 安装所有依赖
+uv sync
+
+# 仅安装基本功能
+uv sync --no-group dev
+```
+
+3. 创建必要的目录：
 ```bash
 mkdir -p data output
 ```
 
-### 🤖 AI助手额外要求
+### 🤖 AI助手安装
 
 如果要使用AI助手功能，还需要：
 
@@ -43,87 +59,143 @@ ollama serve
 ollama pull llama3.1
 ```
 
-3. 验证安装：
+3. 安装AI依赖：
+```bash
+uv sync --group ai
+```
+
+4. 验证安装：
 ```bash
 # 测试AI助手
-python ai_chat.py "测试连接"
+uv run python ai_chat.py "测试连接"
 ```
+
+### 🔌 MCP服务器安装
+
+要在Claude Desktop中使用：
+
+1. 安装MCP依赖：
+```bash
+uv sync --group mcp
+```
+
+2. 测试MCP服务器：
+```bash
+uv run python test_mcp.py
+```
+
+3. 配置Claude Desktop（将以下内容添加到Claude Desktop配置文件）：
+```json
+{
+  "mcpServers": {
+    "stock-valuation-calculator": {
+      "command": "uv",
+      "args": [
+        "--directory",
+        "/path/to/your/project",
+        "run",
+        "python",
+        "mcp_server.py"
+      ]
+    }
+  }
+}
+```
+
+配置文件位置：
+- **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+- **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
 
 ## 🔧 使用方法
 
 ### 🤖 AI助手（推荐）
 
-基于Ollama的对话式AI助手，支持自然语言交互：
+基于Ollama的对话式AI助手，通过自然语言交互使用所有功能：
 
 ```bash
 # 启动交互式AI助手
-python ai_chat.py
+uv run python ai_chat.py
 
 # 直接查询模式
-python ai_chat.py "估值苹果公司"
-python ai_chat.py "分析TSLA和NVDA的估值"
+uv run python ai_chat.py "估值苹果公司"
+uv run python ai_chat.py "分析TSLA和NVDA的估值"
 ```
 
-AI助手使用示例：
-- "估值苹果" → 自动分析AAPL
-- "分析AAPL,GOOGL,MSFT三只股票" → 批量估值
-- "估值科技股组合" → 组合分析
-- "有哪些组合" → 查看所有组合
-- "更新数据" → 更新WACC数据
+#### 💬 使用示例
 
-详细使用说明请参考：[AI助手使用指南](AI_GUIDE.md)
+**单股票估值:**
+- "估值苹果" / "分析AAPL" / "NVDA的估值怎么样"
+
+**批量估值:**
+- "分析AAPL,GOOGL,MSFT三只股票"
+- "帮我估值苹果、谷歌、微软"
+
+**组合分析:**
+- "估值科技股组合" / "tech_stocks组合的估值怎么样"
+
+**管理功能:**
+- "有哪些组合" / "更新数据" / "显示行业分类"
+
+#### 🎯 AI助手能力
+
+**✅ 支持功能:**
+- DCF估值分析和IRR计算
+- 多股票批量处理和组合分析
+- 中英文混合输入和意图理解
+- WACC数据管理和行业查询
+
+**❌ 使用限制:**
+- 仅提供估值分析，不提供投资建议
+- 依赖网络连接和数据质量
+- 需要Ollama服务运行
 
 ### 🔌 MCP服务器（Claude Desktop集成）
 
-将股票估值功能直接集成到Claude Desktop中：
+配置完成后，直接在Claude Desktop中使用：
 
-```bash
-# 测试MCP服务器
-python test_mcp.py
-
-# 配置Claude Desktop后直接在Claude中使用：
-# "请帮我估值苹果公司"
-# "分析AAPL、GOOGL、MSFT的估值"
 ```
-
-详细配置说明请参考：[MCP服务器指南](MCP_GUIDE.md)
+# 在Claude中直接使用自然语言：
+"请帮我估值苹果公司"
+"分析AAPL、GOOGL、MSFT的估值"
+"生成TSLA和NVDA的Excel估值报告"
+```
 
 ### 传统命令行
 
 ```bash
 # 估值单个股票
-python valuation.py AAPL
+uv run python valuation.py AAPL
 
 # 估值多个股票
-python valuation.py AAPL GOOGL MSFT
+uv run python valuation.py AAPL GOOGL MSFT
 
 # 使用股票组合
-python valuation.py --portfolio tech_stocks
+uv run python valuation.py --portfolio tech_stocks
 
 # 生成Excel报告
-python valuation.py AAPL --excel
+uv run python valuation.py AAPL --excel
 
 # 指定输出文件名
-python valuation.py AAPL --excel --output "我的估值报告.xlsx"
+uv run python valuation.py AAPL --excel --output "我的估值报告.xlsx"
 ```
 
 ### 管理功能
 
 ```bash
 # 列出所有股票组合
-python valuation.py --list-portfolios
+uv run python valuation.py --list-portfolios
 
-# 列出所有可用行业
-python valuation.py --list-industries
+# 列出所有可用行业（主要用于调试）
+uv run python valuation.py --list-industries
 
-# 设置股票的自定义行业
-python valuation.py --set-industry AAPL "计算机与外设"
+# 设置股票的自定义行业（通常不需要，Turbo缓存自动处理）
+uv run python valuation.py --set-industry AAPL "计算机与外设"
 
 # 手动更新WACC数据
-python valuation.py --update-wacc
+uv run python valuation.py --update-wacc
 
 # 详细输出
-python valuation.py AAPL --verbose
+uv run python valuation.py AAPL --verbose
 ```
 
 ## 📊 输出示例
@@ -133,36 +205,47 @@ python valuation.py AAPL --verbose
 ================================================================================
 股票估值报告
 ================================================================================
-生成时间: 2024-01-15 10:30:00
+生成时间: 2025-07-01 21:21:31
 报告股票数量: 1
 ================================================================================
 
 汇总表格:
-股票代码  当前价格   内在价值   涨跌幅    IRR    评估
-AAPL    $150.00   $180.00   20.0%   12.5%   合理
+股票代码    当前价格    内在价值  IRR 评估
+AAPL $205.17 $110.01 1.1% 高估
 
 详细信息:
 --------------------------------------------------------------------------------
 
 📊 AAPL 详细估值
 ----------------------------------------
-当前价格: $150.00
-内在价值: $180.00
-涨跌幅: 20.0%
-IRR: 12.5%
-评估结果: 合理
+当前价格: $205.17
+内在价值: $110.01
+IRR: 1.1%
+评估结果: 高估
 
 估值参数:
-  折现率 (WACC): 8.50%
-  增长率: 15.2%
+  折现率 (WACC): 9.29%
   永续增长率: 2.5%
   预测年数: 10年
 
 财务数据:
-  最新自由现金流: $95,000,000,000
-  企业价值: $2,850,000,000,000
-  终值: $2,100,000,000,000
-  流通股数: 15,800,000,000
+  最新自由现金流: $108,807,000,000
+  企业价值: $1,643,160,299,840
+  终值: $2,103,384,103,463
+  流通股数: 14,935,799,808
+
+==================================================
+统计信息
+==================================================
+评估结果分布:
+  高估: 1只 (100.0%)
+
+IRR统计:
+  平均IRR: 1.1%
+  中位数IRR: 1.1%
+  最高IRR: 1.1%
+  最低IRR: 1.1%
+==================================================
 ```
 
 ### Excel报告
@@ -188,13 +271,11 @@ IRR: 12.5%
       "description": "我的投资组合",
       "stocks": ["AAPL", "AMZN", "JPM"]
     }
-  },
-  "custom_industries": {
-    "AAPL": "计算机与外设",
-    "GOOGL": "互联网"
   }
 }
 ```
+
+> 注意：使用Turbo缓存系统后，不再需要手动配置行业映射
 
 ### 估值参数配置
 编辑 `config.py` 文件：
@@ -218,25 +299,35 @@ VALUATION_THRESHOLDS = {
 - **WACC数据**：每月1号自动更新（超过30天会提示更新）
 - **股票数据**：每次运行时从yfinance实时获取
 
-## 🏭 行业映射
+## 🚀 Turbo缓存系统
 
-系统支持智能行业映射：
-1. **用户自定义**：优先使用用户在配置文件中的设置
-2. **精确匹配**：匹配yfinance的industry到达摩达兰分类
-3. **模糊匹配**：基于关键词的智能匹配
-4. **行业默认**：使用yfinance的sector默认映射
+系统采用高性能Turbo缓存技术，实现：
 
-如果无法自动映射，系统会提示手动设置：
-```bash
-python valuation.py --set-industry SYMBOL "行业名称"
-```
+### 核心优势
+- **毫秒级查询**：41,082个全球股票的WACC数据预计算
+- **多国支持**：美国、中国、日本、香港、台湾等交易所
+- **直接映射**：股票代码直接对应WACC，无需复杂行业匹配
+- **智能兜底**：多级匹配策略确保数据覆盖
+
+### 查询优先级
+1. **精确匹配**：股票代码对应国家的行业WACC
+2. **模糊匹配**：同国家内的相似行业WACC  
+3. **跨国兜底**：使用美国同行业WACC
+4. **默认值**：系统默认WACC (8.92%)
+
+### 支持的交易所
+- **美国**: NYSE, NASDAQ, AMEX (无后缀)
+- **中国**: 上交所(.SS), 深交所(.SZ), 港交所(.HK)  
+- **日本**: 东京证交所(.T)
+- **台湾**: 台交所(.TW)
+- **其他**: 伦敦(.L), 法兰克福(.F)等
 
 ## 📈 估值模型
 
 ### DCF模型假设
 - **预测期**：10年
-- **增长率**：前5年使用历史平均增长率，后5年线性递减至永续增长率
-- **永续增长率**：2.5%
+- **增长率**：使用永续增长率2.5%预测所有未来现金流
+- **永续增长率**：2.5%（固定为名义GDP增长率）
 - **折现率**：使用达摩达兰行业WACC数据
 - **自由现金流**：经营现金流 - 资本支出
 
@@ -261,32 +352,108 @@ python valuation.py --set-industry SYMBOL "行业名称"
    - 不考虑市场情绪和技术分析因素
    - 增长率基于历史数据，可能不反映未来变化
 
+4. **AI助手限制**：
+   - 需要Ollama服务运行
+   - 不提供投资建议，仅提供估值分析
+   - 依赖模型的自然语言理解能力
+
 ## 🛠️ 故障排除
 
 ### 常见问题
 
-1. **无法获取股票数据**
+1. **依赖安装失败**
+   - 确保已安装uv：`curl -LsSf https://astral.sh/uv/install.sh | sh`
+   - 运行：`uv sync`
+
+2. **无法获取股票数据**
    - 检查股票代码是否正确
    - 确认网络连接正常
    - 某些股票可能在yfinance中不可用
 
-2. **行业映射失败**
-   - 使用 `--list-industries` 查看可用行业
-   - 使用 `--set-industry` 手动设置行业
+3. **AI助手连接失败**
+   - 检查Ollama服务：`ollama serve` 或 `brew services start ollama`
+   - 确认模型已下载：`ollama list` 
+   - 重新下载模型：`ollama pull llama3.1`
+   - 检查AI依赖：`uv sync --group ai`
 
-3. **WACC数据更新失败**
+4. **MCP服务器无法启动**
+   - 运行测试：`uv run python test_mcp.py`
+   - 检查配置路径是否正确
+   - 重启Claude Desktop
+   - 确认MCP依赖：`uv sync --group mcp`
+
+5. **Turbo缓存问题**
+   - 缺少indname.xls文件，请联系开发者获取
+   - 缓存重建：删除 `data/turbo_cache` 文件夹后重新运行
+
+6. **WACC数据更新失败**
    - 检查网络连接
    - 手动运行 `--update-wacc` 重试
 
-4. **Excel报告生成失败**
-   - 确保安装了openpyxl：`pip install openpyxl`
+7. **Excel报告生成失败**
+   - 确保安装了openpyxl：`uv add openpyxl`
    - 检查output目录是否有写入权限
+
+### AI助手专属问题
+
+**Q: AI回复不准确或无关？**
+- 使用准确的股票代码而非公司名称
+- 尝试更详细地描述需求
+- 重新开始对话清除上下文
+
+**Q: "模型下载慢或失败"？**
+- 检查网络连接状态
+- 尝试不同的模型：`ollama pull qwen2.5:7b`
+- 清除缓存：`ollama rm llama3.1` 后重新下载
+
+**Q: 想要更换AI模型？**
+```bash
+# 下载其他模型
+ollama pull qwen2.5:7b
+ollama pull gemma2:9b
+
+# 修改 ai_assistant.py 中的模型名称
+```
+
+## 🔧 开发
+
+### 项目结构
+```
+stock_valuation_calculator/
+├── pyproject.toml          # 项目配置和依赖
+├── config.py              # 估值参数配置
+├── valuation.py           # 主程序入口
+├── ai_chat.py             # AI助手启动脚本
+├── mcp_server.py          # MCP服务器
+├── data_fetcher.py        # 数据获取模块
+├── dcf_calculator.py      # DCF计算模块
+├── report_generator.py    # 报告生成模块
+├── data/                  # 数据文件夹
+│   ├── stock_portfolios.json
+│   └── wacc_data.json
+└── output/                # 输出文件夹
+```
+
+### 开发环境设置
+```bash
+# 安装开发依赖
+uv sync --group dev
+
+# 运行测试
+uv run pytest
+
+# 代码格式化
+uv run black .
+
+# 类型检查
+uv run mypy .
+```
 
 ## 📞 支持
 
 如果遇到问题或有改进建议，请：
 1. 检查日志输出（使用 `--verbose` 参数）
-2. 确认所有依赖已正确安装
+2. 确认所有依赖已正确安装（运行 `uv sync`）
 3. 检查配置文件格式是否正确
 
 ## 📄 许可证

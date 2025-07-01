@@ -38,7 +38,6 @@ class ReportGenerator:
                     '股票代码': valuation.get('symbol', 'N/A'),
                     '当前价格': 'N/A',
                     '内在价值': 'N/A',
-                    '涨跌幅': 'N/A',
                     'IRR': 'N/A',
                     '评估': valuation['error']
                 })
@@ -47,7 +46,6 @@ class ReportGenerator:
                     '股票代码': valuation['symbol'],
                     '当前价格': f"${valuation['current_price']:.2f}",
                     '内在价值': f"${valuation['intrinsic_value']:.2f}",
-                    '涨跌幅': f"{valuation['upside_downside']:.1%}",
                     'IRR': f"{valuation['irr']:.1%}" if valuation['irr'] else 'N/A',
                     '评估': valuation['evaluation']
                 })
@@ -77,7 +75,6 @@ class ReportGenerator:
         # 基本信息
         print(f"当前价格: ${valuation['current_price']:.2f}")
         print(f"内在价值: ${valuation['intrinsic_value']:.2f}")
-        print(f"涨跌幅: {valuation['upside_downside']:.1%}")
         print(f"IRR: {valuation['irr']:.1%}" if valuation['irr'] else "IRR: 无法计算")
         print(f"评估结果: {valuation['evaluation']}")
         
@@ -142,7 +139,6 @@ class ReportGenerator:
                     '公司名称': valuation.get('name', 'N/A'),
                     '当前价格': None,
                     '内在价值': None,
-                    '涨跌幅': None,
                     'IRR': None,
                     '评估结果': valuation['error'],
                     '错误信息': valuation['error']
@@ -153,7 +149,6 @@ class ReportGenerator:
                     '公司名称': valuation.get('name', 'N/A'),
                     '当前价格': valuation['current_price'],
                     '内在价值': valuation['intrinsic_value'],
-                    '涨跌幅': valuation['upside_downside'],
                     'IRR': valuation['irr'],
                     '评估结果': valuation['evaluation'],
                     '错误信息': None
@@ -175,7 +170,6 @@ class ReportGenerator:
                 '股票代码': valuation['symbol'],
                 '当前价格': valuation['current_price'],
                 '内在价值': valuation['intrinsic_value'],
-                '涨跌幅': valuation['upside_downside'],
                 'IRR': valuation['irr'],
                 '评估结果': valuation['evaluation'],
                 '折现率': valuation['wacc'],
@@ -262,14 +256,5 @@ class ReportGenerator:
             print(f"  中位数IRR: {np.median(irrs):.1%}")
             print(f"  最高IRR: {np.max(irrs):.1%}")
             print(f"  最低IRR: {np.min(irrs):.1%}")
-        
-        # 涨跌幅统计
-        upside_downsides = [v['upside_downside'] for v in valid_valuations]
-        if upside_downsides:
-            print(f"\n涨跌幅统计:")
-            print(f"  平均涨跌幅: {np.mean(upside_downsides):.1%}")
-            print(f"  中位数涨跌幅: {np.median(upside_downsides):.1%}")
-            print(f"  最大涨幅: {np.max(upside_downsides):.1%}")
-            print(f"  最大跌幅: {np.min(upside_downsides):.1%}")
         
         print("="*50) 
