@@ -35,46 +35,71 @@ class ValuationSystem:
         self.report_generator = ReportGenerator()
     
     def ensure_data_ready(self):
-        """确保数据准备就绪"""
+        """确保数据准备就绪（优化版：延迟加载）"""
         logger.info("检查数据准备状态...")
         
-        # 确保WACC数据可用
-        if not self.wacc_updater.ensure_wacc_data():
-            logger.warning("WACC数据不可用，将使用默认折现率")
+        # 不再强制预加载行业WACC数据，改为按需加载
+        # 这样可以大大减少启动时间，因为大部分情况下个股WACC都能计算成功
+        logger.info("✅ 采用延迟加载策略，行业WACC数据将在需要时加载")
         
         return True
     
     def get_wacc_for_stock(self, symbol, sector, industry):
-        """获取股票的WACC（使用Turbo缓存直接获取）"""
-        # 首先尝试直接从Turbo缓存获取WACC
+        """获取股票的WACC（优先使用个股WACC，行业WACC作为fallback）"""
+        # 首先尝试计算个股WACC
+        try:
+            from individual_wacc_calculator import IndividualWACCCalculator
+            individual_calc = IndividualWACCCalculator()
+            individual_wacc_result = individual_calc.calculate_individual_wacc(symbol)
+            
+            if 'error' not in individual_wacc_result:
+                # 个股WACC计算成功
+                wacc = individual_wacc_result['wacc']
+                mapping_source = "个股WACC"
+                damodaran_industry = f"个股计算 (原行业: {industry or sector or '未知'})"
+                logger.info(f"✅ {symbol}: 使用个股WACC={wacc:.2%}")
+                return wacc, mapping_source, damodaran_industry
+            else:
+                logger.warning(f"⚠️ {symbol}: 个股WACC计算失败 - {individual_wacc_result['error']}")
+        except Exception as e:
+            logger.warning(f"⚠️ {symbol}: 个股WACC计算异常 - {e}")
+        
+        # 个股WACC失败，fallback到行业WACC（开始按需加载）
+        logger.info(f"📊 {symbol}: 个股WACC不可用，开始按需加载行业WACC作为fallback")
+        
+        # 尝试从Turbo缓存获取行业WACC
         wacc = self.industry_mapper.get_wacc_direct(symbol)
         stock_info = self.industry_mapper.get_stock_info(symbol)
         
         if stock_info:
             # 从Turbo缓存成功获取
             damodaran_industry = stock_info.get('industry', '')
-            mapping_source = "Turbo缓存"
-            logger.info(f"{symbol}: Turbo缓存直接获取 WACC={wacc:.2%}, 行业={damodaran_industry}")
+            mapping_source = "行业WACC(Turbo缓存)"
+            logger.info(f"✅ {symbol}: Turbo缓存获取行业WACC={wacc:.2%}, 行业={damodaran_industry}")
             return wacc, mapping_source, damodaran_industry
         
-        # 如果Turbo缓存没有，尝试使用yfinance数据作为兜底
+        # 如果Turbo缓存没有，尝试使用yfinance数据作为兜底（这里会触发按需加载）
+        logger.info(f"🔄 {symbol}: Turbo缓存未找到，开始按需加载Damodaran行业WACC数据...")
+        
         if industry:
-            logger.info(f"{symbol}: Turbo缓存未找到，尝试yfinance行业: {industry}")
+            logger.info(f"🔍 {symbol}: 尝试yfinance行业: {industry}")
             fallback_wacc = self.wacc_updater.get_wacc_for_industry(industry)
             if fallback_wacc is not None:
-                return fallback_wacc, "yfinance兜底", industry
+                logger.info(f"✅ {symbol}: 成功获取行业WACC={fallback_wacc:.2%}")
+                return fallback_wacc, "行业WACC(yfinance兜底)", industry
             damodaran_industry = industry
         elif sector:
-            logger.info(f"{symbol}: Turbo缓存未找到，尝试yfinance板块: {sector}")
+            logger.info(f"🔍 {symbol}: 尝试yfinance板块: {sector}")
             fallback_wacc = self.wacc_updater.get_wacc_for_industry(sector)
             if fallback_wacc is not None:
-                return fallback_wacc, "yfinance兜底", sector
+                logger.info(f"✅ {symbol}: 成功获取行业WACC={fallback_wacc:.2%}")
+                return fallback_wacc, "行业WACC(yfinance兜底)", sector
             damodaran_industry = sector
         else:
             damodaran_industry = "未知行业"
         
         # 使用默认WACC
-        logger.warning(f"{symbol}: 使用默认WACC {DEFAULT_WACC:.2%}")
+        logger.warning(f"⚠️ {symbol}: 所有WACC获取方式都失败，使用默认WACC {DEFAULT_WACC:.2%}")
         return DEFAULT_WACC, "默认值", damodaran_industry
     
     def valuate_single_stock(self, symbol):
@@ -275,6 +300,10 @@ def main():
     if not valuation_system.ensure_data_ready():
         logger.error("数据准备失败，退出程序")
         sys.exit(1)
+    
+    # 提示用户缓存机制优化
+    logger.info("🚀 缓存机制已优化：优先使用个股WACC，行业WACC按需加载")
+    logger.info("💡 大多数情况下可直接使用个股WACC，启动更快速")
     
     # 获取要估值的股票列表
     symbols = []

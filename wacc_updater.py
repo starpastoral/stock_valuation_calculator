@@ -42,24 +42,27 @@ class WACCUpdater:
             logger.error(f"加载WACC数据失败: {e}")
     
     def ensure_wacc_data(self):
-        """确保WACC数据可用"""
+        """确保WACC数据可用（优化版：按需加载）"""
         if self.wacc_index is None and self.wacc_data is None:
-            logger.info("WACC数据不存在，正在从xls文件加载...")
+            logger.info("🔄 按需加载：WACC数据不存在，正在从xls文件加载...")
             
             # 从xls文件转换数据
             if self.processor.convert_wacc_files() is not None:
                 self.processor.create_fast_lookup_index()
                 self._load_data()
+                logger.info("✅ 按需加载：WACC数据加载成功")
                 return True
             else:
-                logger.error("无法从xls文件加载WACC数据")
+                logger.error("❌ 按需加载：无法从xls文件加载WACC数据")
                 return False
         
+        # 数据已经存在，无需重新加载
+        logger.debug("✅ WACC数据已存在，跳过加载")
         return True
     
     def get_wacc_for_industry(self, industry, region='US'):
         """
-        获取特定行业的WACC
+        获取特定行业的WACC（优化版：按需加载）
         
         Args:
             industry: 行业名称
@@ -68,7 +71,11 @@ class WACCUpdater:
         Returns:
             float: WACC值，如果找不到返回None
         """
+        logger.debug(f"🔍 查询行业WACC: {industry} ({region})")
+        
+        # 检查是否需要按需加载数据
         if not self.ensure_wacc_data():
+            logger.warning(f"⚠️ 无法加载WACC数据，使用{industry}行业的默认WACC")
             return self._get_default_wacc(industry)
         
         # 1. 使用快速索引查找（如果可用）
@@ -76,20 +83,25 @@ class WACCUpdater:
             # 直接匹配
             key = f"{region}:{industry}"
             if key in self.wacc_index:
-                return self.wacc_index[key]
+                wacc_value = self.wacc_index[key]
+                logger.debug(f"✅ 精确匹配: {industry} -> {wacc_value:.2%}")
+                return wacc_value
             
             # 模糊匹配
             for index_key, wacc_value in self.wacc_index.items():
                 if index_key.startswith(f"{region}:") and industry.lower() in index_key.lower():
+                    logger.debug(f"✅ 模糊匹配: {industry} -> {index_key} -> {wacc_value:.2%}")
                     return wacc_value
         
         # 2. 使用数据处理器查找
         if self.wacc_data is not None and 'industry' in self.wacc_data.columns:
             wacc_result = self.processor.get_industry_wacc(industry, region, self.wacc_data)
             if wacc_result is not None:
+                logger.debug(f"✅ 数据处理器找到: {industry} -> {wacc_result:.2%}")
                 return wacc_result
         
         # 3. 使用默认WACC值
+        logger.debug(f"⚠️ 未找到行业WACC，使用默认值: {industry}")
         return self._get_default_wacc(industry)
     
     def _get_default_wacc(self, industry=None):
@@ -122,14 +134,18 @@ class WACCUpdater:
             industry_lower = industry.lower()
             # 精确匹配
             if industry_lower in default_wacc_mapping:
-                return default_wacc_mapping[industry_lower]
+                wacc_value = default_wacc_mapping[industry_lower]
+                logger.debug(f"📊 默认WACC精确匹配: {industry} -> {wacc_value:.2%}")
+                return wacc_value
             
             # 模糊匹配
             for key, wacc in default_wacc_mapping.items():
                 if key in industry_lower or industry_lower in key:
+                    logger.debug(f"📊 默认WACC模糊匹配: {industry} -> {key} -> {wacc:.2%}")
                     return wacc
         
         # 总市场默认值
+        logger.debug(f"📊 使用总市场默认WACC: 9.0%")
         return 0.09  # 9%
     
     def list_available_industries(self, region='US'):
