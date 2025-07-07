@@ -75,7 +75,7 @@ class ReportGenerator:
         # 基本信息
         print(f"当前价格: ${valuation['current_price']:.2f}")
         print(f"内在价值: ${valuation['intrinsic_value']:.2f}")
-        print(f"IRR: {valuation['irr']:.1%}" if valuation['irr'] else "IRR: 无法计算")
+        print(f"IRR (年化收益率): {valuation['irr']:.1%}" if valuation['irr'] else "IRR: 无法计算")
         print(f"评估结果: {valuation['evaluation']}")
         
         # 估值参数

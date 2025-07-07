@@ -1,6 +1,5 @@
 # DCF计算模块
 import numpy as np
-from scipy.optimize import fsolve
 import logging
 from config import PERPETUAL_GROWTH_RATE, FORECAST_YEARS, DEFAULT_WACC
 
@@ -58,7 +57,7 @@ class DCFCalculator:
             intrinsic_value_per_share = enterprise_value / shares_outstanding
             
             # 计算IRR
-            irr = self._calculate_irr(current_price, future_fcf, terminal_value, shares_outstanding)
+            irr = self._calculate_irr(current_price, intrinsic_value_per_share)
             
             return {
                 'symbol': stock_data['symbol'],
@@ -122,32 +121,35 @@ class DCFCalculator:
             pv_fcf.append(pv)
         return pv_fcf
     
-    def _calculate_irr(self, current_price, future_fcf, terminal_value, shares_outstanding):
-        """计算IRR"""
+    def _calculate_irr(self, current_price, intrinsic_value_per_share):
+        """
+        计算IRR - 使用Total Return方法
+        
+        改进说明：
+        - 不再假设投资者每年收到全部自由现金流
+        - 基于DCF计算的内在价值，计算买入持有到期的年化收益率
+        - 更符合实际投资场景：买入股票后在未来某个时点卖出
+        
+        Args:
+            current_price: 当前股价
+            intrinsic_value_per_share: 每股内在价值
+        """
         try:
-            # 计算每股现金流
-            fcf_per_share = [fcf / shares_outstanding for fcf in future_fcf]
-            terminal_value_per_share = terminal_value / shares_outstanding
-            
-            # 创建现金流序列 (初始投资为负，未来现金流为正)
-            cash_flows = [-current_price]  # 初始投资
-            cash_flows.extend(fcf_per_share[:-1])  # 前9年现金流
-            cash_flows.append(fcf_per_share[-1] + terminal_value_per_share)  # 第10年现金流+终值
-            
-            # 定义NPV函数
-            def npv(rate):
-                return sum([cf / (1 + rate) ** i for i, cf in enumerate(cash_flows)])
-            
-            # 使用数值方法求解IRR
-            # 初始猜测值为10%
-            try:
-                irr = fsolve(npv, 0.1)[0]
-                # 验证结果是否合理
-                if irr < -0.9 or irr > 5.0:  # IRR在-90%到500%之间
-                    return None
-                return irr
-            except:
+            # Total Return IRR计算
+            # IRR = (内在价值 / 当前价格)^(1/年数) - 1
+            if current_price <= 0 or intrinsic_value_per_share <= 0:
+                logger.warning("股价或内在价值为负，无法计算IRR")
                 return None
+            
+            irr = (intrinsic_value_per_share / current_price) ** (1/self.forecast_years) - 1
+            
+            # 合理性检查 - 年化收益率在-50%到50%之间
+            if irr < -0.5 or irr > 0.5:
+                logger.warning(f"IRR异常: {irr:.2%}，当前价格: {current_price:.2f}，内在价值: {intrinsic_value_per_share:.2f}")
+                return None
+            
+            logger.info(f"IRR计算: 内在价值 {intrinsic_value_per_share:.2f} / 当前价格 {current_price:.2f} = {irr:.2%}")
+            return irr
                 
         except Exception as e:
             logger.error(f"IRR计算失败: {e}")
@@ -155,13 +157,13 @@ class DCFCalculator:
     
     def evaluate_valuation(self, dcf_result):
         """
-        根据IRR评估估值
+        根据IRR和内在价值倍数综合评估估值
         
         Args:
             dcf_result: DCF计算结果
             
         Returns:
-            str: 评估结果（高估/合理/低估）
+            str: 评估结果（严重高估/高估/合理/低估/严重低估）
         """
         if 'error' in dcf_result:
             return '无法评估'
@@ -170,15 +172,35 @@ class DCFCalculator:
         if irr is None:
             return '无法计算IRR'
         
-        # 基于配置的阈值评估
-        from config import VALUATION_THRESHOLDS
+        # 计算内在价值倍数
+        current_price = dcf_result.get('current_price')
+        intrinsic_value = dcf_result.get('intrinsic_value')
         
-        if irr < VALUATION_THRESHOLDS['高估']:
-            return '高估'
-        elif irr < VALUATION_THRESHOLDS['合理']:
-            return '合理'
-        else:
+        if current_price <= 0 or intrinsic_value <= 0:
+            return '数据异常'
+        
+        value_ratio = intrinsic_value / current_price
+        
+        # 基于配置的阈值评估
+        from config import VALUATION_THRESHOLDS, VALUE_RATIO_THRESHOLDS
+        
+        # 优先基于内在价值倍数评估（更直观）
+        if value_ratio >= VALUE_RATIO_THRESHOLDS['严重低估']:
+            return '严重低估'
+        elif value_ratio >= VALUE_RATIO_THRESHOLDS['低估']:
             return '低估'
+        elif value_ratio <= VALUE_RATIO_THRESHOLDS['严重高估']:
+            return '严重高估'
+        elif value_ratio <= VALUE_RATIO_THRESHOLDS['高估']:
+            return '高估'
+        else:
+            # 在合理区间内，进一步基于IRR评估
+            if irr < VALUATION_THRESHOLDS['高估']:
+                return '高估'
+            elif irr < VALUATION_THRESHOLDS['低估']:
+                return '合理'
+            else:
+                return '低估'
     
     def create_sensitivity_analysis(self, stock_data, base_wacc, wacc_range=0.02, perpetual_growth_range=0.005):
         """

@@ -336,7 +336,7 @@ class StockValuationMCP:
         response = f"✅ {result['symbol']} ({result.get('name', 'N/A')}) 估值结果：\n"
         response += f"- 当前价格：${result['current_price']:.2f}\n"
         response += f"- 内在价值：${result['intrinsic_value']:.2f}\n"
-        response += f"- 内部收益率（IRR）：{result['irr']:.1%}" if result['irr'] else "- 内部收益率（IRR）：N/A"
+        response += f"- 年化收益率（IRR）：{result['irr']:.1%}" if result['irr'] else "- 年化收益率（IRR）：N/A"
         response += f"\n- 评估结论：{result['evaluation']}\n"
         
         response += f"\n主要估值参数：\n"
