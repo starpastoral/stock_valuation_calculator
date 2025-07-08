@@ -12,6 +12,8 @@ import os
 import logging
 from datetime import datetime
 from typing import List, Dict, Optional
+import concurrent.futures
+import time
 
 # 导入自定义模块
 from data_fetcher import StockDataFetcher
@@ -36,6 +38,9 @@ class ValuationSystem:
         self.report_generator = ReportGenerator()
         self.wacc_processor = WACCProcessor()
         self.wacc_updater = WACCUpdater()
+        
+        # 新增：会话缓存
+        self.session_cache = {}
     
     def ensure_data_ready(self):
         """确保数据已准备好"""
@@ -138,8 +143,79 @@ class ValuationSystem:
         
         return result
     
-    def valuate_multiple_stocks(self, symbols):
-        """估值多个股票"""
+    def valuate_multiple_stocks_concurrent(self, symbols: List[str], 
+                                         max_workers: int = 4, 
+                                         progress_callback=None) -> List[Dict]:
+        """
+        并发估值多个股票 - 保持完整的估值质量
+        
+        Args:
+            symbols: 股票代码列表
+            max_workers: 最大并发数（建议2-6，避免API限制）
+            progress_callback: 进度回调函数
+        """
+        results = []
+        completed = 0
+        
+        def process_with_progress(symbol):
+            """带进度更新的处理函数"""
+            nonlocal completed
+            try:
+                result = self.valuate_single_stock(symbol)
+                completed += 1
+                if progress_callback:
+                    progress_callback(completed, len(symbols), symbol)
+                return result
+            except Exception as e:
+                completed += 1
+                if progress_callback:
+                    progress_callback(completed, len(symbols), symbol, error=str(e))
+                return {
+                    'symbol': symbol,
+                    'error': f'估值失败: {str(e)}',
+                    'timestamp': datetime.now().isoformat()
+                }
+        
+        # 使用线程池并发处理
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # 提交所有任务
+            future_to_symbol = {
+                executor.submit(process_with_progress, symbol): symbol 
+                for symbol in symbols
+            }
+            
+            # 收集结果（保持原有顺序）
+            symbol_to_future = {symbol: future for future, symbol in future_to_symbol.items()}
+            
+            for symbol in symbols:
+                future = symbol_to_future[symbol]
+                try:
+                    result = future.result(timeout=300)  # 5分钟超时
+                    results.append(result)
+                except concurrent.futures.TimeoutError:
+                    results.append({
+                        'symbol': symbol,
+                        'error': '估值超时（5分钟）',
+                        'timestamp': datetime.now().isoformat()
+                    })
+                except Exception as e:
+                    results.append({
+                        'symbol': symbol,
+                        'error': f'并发处理失败: {str(e)}',
+                        'timestamp': datetime.now().isoformat()
+                    })
+        
+        return results
+    
+    def _default_progress_callback(self, completed, total, current_symbol, error=None):
+        """默认进度回调"""
+        if error:
+            logger.error(f"[{completed}/{total}] ❌ {current_symbol}: {error}")
+        else:
+            logger.info(f"[{completed}/{total}] ✅ {current_symbol} 估值完成")
+    
+    def _valuate_multiple_stocks_sequential(self, symbols):
+        """保持原有的串行处理逻辑"""
         results = []
         
         for i, symbol in enumerate(symbols, 1):
@@ -157,6 +233,152 @@ class ValuationSystem:
                 })
         
         return results
+
+    def valuate_multiple_stocks(self, symbols: List[str], use_concurrent: bool = True) -> List[Dict]:
+        """
+        估值多个股票 - 兼容原有接口，但提供选择
+        
+        Args:
+            symbols: 股票代码列表
+            use_concurrent: 是否使用并发处理（默认True）
+        """
+        if use_concurrent and len(symbols) >= 3:  # 3个以上股票使用并发
+            logger.info(f"检测到{len(symbols)}个股票，启用并发处理模式")
+            return self.valuate_multiple_stocks_concurrent(
+                symbols, 
+                max_workers=min(4, len(symbols)),
+                progress_callback=self._default_progress_callback
+            )
+        else:
+            logger.info(f"使用串行处理")
+            return self._valuate_multiple_stocks_sequential(symbols)
+    
+    def performance_test(self, symbols: List[str], test_concurrent: bool = True) -> Dict:
+        """
+        性能测试 - 对比串行和并发处理的性能
+        
+        Args:
+            symbols: 测试股票代码列表
+            test_concurrent: 是否测试并发处理
+        
+        Returns:
+            Dict: 性能测试结果
+        """
+        results = {
+            'test_symbols': symbols,
+            'symbol_count': len(symbols),
+            'test_date': datetime.now().isoformat(),
+            'sequential': {},
+            'concurrent': {}
+        }
+        
+        # 测试串行处理
+        logger.info(f"🔄 开始串行处理性能测试 - {len(symbols)}个股票")
+        start_time = time.time()
+        
+        try:
+            sequential_results = self._valuate_multiple_stocks_sequential(symbols)
+            sequential_time = time.time() - start_time
+            
+            successful_count = len([r for r in sequential_results if 'error' not in r])
+            
+            results['sequential'] = {
+                'total_time': sequential_time,
+                'avg_time_per_stock': sequential_time / len(symbols),
+                'successful_count': successful_count,
+                'error_count': len(symbols) - successful_count,
+                'results': sequential_results
+            }
+            
+            logger.info(f"✅ 串行处理完成: {sequential_time:.2f}秒 (平均每股 {sequential_time/len(symbols):.2f}秒)")
+            
+        except Exception as e:
+            logger.error(f"❌ 串行处理测试失败: {e}")
+            results['sequential']['error'] = str(e)
+        
+        # 测试并发处理
+        if test_concurrent:
+            logger.info(f"🔄 开始并发处理性能测试 - {len(symbols)}个股票")
+            start_time = time.time()
+            
+            try:
+                concurrent_results = self.valuate_multiple_stocks_concurrent(
+                    symbols, 
+                    max_workers=min(4, len(symbols)),
+                    progress_callback=self._default_progress_callback
+                )
+                concurrent_time = time.time() - start_time
+                
+                successful_count = len([r for r in concurrent_results if 'error' not in r])
+                
+                results['concurrent'] = {
+                    'total_time': concurrent_time,
+                    'avg_time_per_stock': concurrent_time / len(symbols),
+                    'successful_count': successful_count,
+                    'error_count': len(symbols) - successful_count,
+                    'results': concurrent_results
+                }
+                
+                logger.info(f"✅ 并发处理完成: {concurrent_time:.2f}秒 (平均每股 {concurrent_time/len(symbols):.2f}秒)")
+                
+                # 计算性能提升
+                if 'total_time' in results['sequential']:
+                    speedup = results['sequential']['total_time'] / concurrent_time
+                    time_saved = results['sequential']['total_time'] - concurrent_time
+                    results['performance_gain'] = {
+                        'speedup_ratio': speedup,
+                        'time_saved_seconds': time_saved,
+                        'time_saved_percent': (time_saved / results['sequential']['total_time']) * 100
+                    }
+                    
+                    logger.info(f"📊 性能提升: {speedup:.2f}x 加速，节省 {time_saved:.2f}秒 ({time_saved/results['sequential']['total_time']*100:.1f}%)")
+                
+            except Exception as e:
+                logger.error(f"❌ 并发处理测试失败: {e}")
+                results['concurrent']['error'] = str(e)
+        
+        return results
+    
+    def generate_performance_report(self, test_results: Dict) -> str:
+        """生成性能测试报告"""
+        report = []
+        report.append("=" * 60)
+        report.append("📊 性能测试报告")
+        report.append("=" * 60)
+        report.append(f"测试时间: {test_results['test_date']}")
+        report.append(f"测试股票数量: {test_results['symbol_count']}")
+        report.append(f"测试股票: {', '.join(test_results['test_symbols'])}")
+        report.append("-" * 60)
+        
+        # 串行处理结果
+        if 'sequential' in test_results and 'total_time' in test_results['sequential']:
+            seq = test_results['sequential']
+            report.append("🔄 串行处理:")
+            report.append(f"  总耗时: {seq['total_time']:.2f}秒")
+            report.append(f"  平均每股: {seq['avg_time_per_stock']:.2f}秒")
+            report.append(f"  成功数量: {seq['successful_count']}/{test_results['symbol_count']}")
+            report.append(f"  失败数量: {seq['error_count']}")
+        
+        # 并发处理结果
+        if 'concurrent' in test_results and 'total_time' in test_results['concurrent']:
+            conc = test_results['concurrent']
+            report.append("\n⚡ 并发处理:")
+            report.append(f"  总耗时: {conc['total_time']:.2f}秒")
+            report.append(f"  平均每股: {conc['avg_time_per_stock']:.2f}秒")
+            report.append(f"  成功数量: {conc['successful_count']}/{test_results['symbol_count']}")
+            report.append(f"  失败数量: {conc['error_count']}")
+        
+        # 性能提升
+        if 'performance_gain' in test_results:
+            gain = test_results['performance_gain']
+            report.append("\n🚀 性能提升:")
+            report.append(f"  加速比: {gain['speedup_ratio']:.2f}x")
+            report.append(f"  节省时间: {gain['time_saved_seconds']:.2f}秒")
+            report.append(f"  提升百分比: {gain['time_saved_percent']:.1f}%")
+        
+        report.append("=" * 60)
+        
+        return "\n".join(report)
     
     def load_portfolio(self, portfolio_name):
         """加载股票组合"""
@@ -367,6 +589,7 @@ def main():
     parser.add_argument('--update', action='store_true', help='更新WACC数据')
     parser.add_argument('--reverse-dcf', action='store_true', help='反向DCF分析')
     parser.add_argument('--compare', action='store_true', help='对比分析')
+    parser.add_argument('--performance-test', action='store_true', help='运行性能测试')
     
     args = parser.parse_args()
     
@@ -434,6 +657,12 @@ def main():
                 current_price = result['current_price']
                 gap = (intrinsic_value - current_price) / current_price * 100
                 print(f"📈 {result['symbol']}: 估值 ${intrinsic_value:.2f} vs 现价 ${current_price:.2f} ({gap:+.1f}%) [方法: {method}]")
+    
+    elif args.performance_test:
+        # 运行性能测试
+        test_symbols = symbols[:5] # 使用前5个股票进行性能测试
+        test_results = valuation_system.performance_test(test_symbols)
+        print(valuation_system.generate_performance_report(test_results))
     
     else:
         # 标准估值分析
