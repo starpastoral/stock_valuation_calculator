@@ -115,6 +115,10 @@ class StockValuationAI:
 4. 查看可用组合列表
 5. 更新WACC数据（每月更新）
 6. 查看行业分类信息
+7. 增强版DCF分析 - 包含动态增长率、反向DCF和多场景估值
+8. 批量增强版DCF分析 - 多个股票的增强版分析
+9. 对比分析 - 传统DCF与增强版DCF的对比
+10. 反向DCF分析 - 计算市场隐含增长率
 
 DCF模型关键参数说明（标准做法）：
 - 增长率：基于历史数据计算，用于预测未来10年现金流
@@ -135,6 +139,7 @@ DCF模型关键参数说明（标准做法）：
 - list_portfolios(): 查看所有可用组合
 - update_wacc(): 更新WACC数据
 - list_industries(): 查看行业分类
+- reverse_dcf(symbol): 反向DCF分析，计算市场隐含增长率
 
 用户输入示例和对应函数调用：
 - "估值苹果" -> valuate_stock("AAPL")
@@ -142,6 +147,9 @@ DCF模型关键参数说明（标准做法）：
 - "估值科技股组合" -> valuate_portfolio("tech_stocks")
 - "有哪些组合" -> list_portfolios()
 - "更新数据" -> update_wacc()
+- "反向DCF分析苹果" -> reverse_dcf("AAPL")
+
+注意：所有估值功能都已使用增强版DCF模型，包含动态增长率、发展阶段分析、多场景估值和投资建议。
 
 请用专业但友好的语气回答，并且总是通过函数调用来获取真实数据。"""
 
@@ -156,7 +164,8 @@ DCF模型关键参数说明（标准做法）：
             r'valuate_portfolio\(["\']([^"\']+)["\']\)',
             r'list_portfolios\(\)',
             r'update_wacc\(\)',
-            r'list_industries\(\)'
+            r'list_industries\(\)',
+            r'reverse_dcf\(["\']([^"\']+)["\']\)'
         ]
         
         for pattern in patterns:
@@ -176,6 +185,9 @@ DCF模型关键参数说明（标准做法）：
                 function_calls.append({'function': 'update_wacc', 'args': []})
             elif 'list_industries()' in response:
                 function_calls.append({'function': 'list_industries', 'args': []})
+            elif 'reverse_dcf(' in response and pattern.startswith('reverse_dcf'):
+                for match in matches:
+                    function_calls.append({'function': 'reverse_dcf', 'args': [match]})
         
         return function_calls
     
@@ -214,6 +226,31 @@ DCF模型关键参数说明（标准做法）：
             elif function_name == 'list_industries':
                 return {'success': True, 'action': 'list_industries'}
             
+            
+            elif function_name == 'reverse_dcf':
+                if len(args) != 1:
+                    return {'error': '参数错误：需要1个股票代码'}
+                # 执行反向DCF分析
+                from data_fetcher import StockDataFetcher
+                from dcf_calculator import ReverseDCFCalculator
+                
+                data_fetcher = StockDataFetcher()
+                stock_data = data_fetcher.get_complete_data(args[0].upper())
+                
+                if 'error' in stock_data:
+                    return {'error': f'获取 {args[0]} 数据失败: {stock_data["error"]}'}
+                
+                wacc, _, _ = self.valuation_system.get_wacc_for_stock(
+                    args[0].upper(), stock_data['sector'], stock_data['industry']
+                )
+                
+                reverse_dcf = ReverseDCFCalculator()
+                result = reverse_dcf.calculate_implied_growth(
+                    args[0].upper(), float(stock_data['current_price']), stock_data, wacc
+                )
+                
+                return {'success': True, 'data': {'stock_data': stock_data, 'reverse_dcf': result}, 'type': 'reverse'}
+            
             else:
                 return {'error': f'未知函数: {function_name}'}
                 
@@ -236,8 +273,29 @@ DCF模型关键参数说明（标准做法）：
                     formatted += f"   当前价格: ${result['current_price']:.2f}\n"
                     formatted += f"   内在价值: ${result['intrinsic_value']:.2f}\n"
                     formatted += f"   年化收益率(IRR): {result['irr']:.1%}" if result['irr'] else "   年化收益率(IRR): N/A"
-                    formatted += f"\n   评估: {result['evaluation']}\n"
+                    formatted += f"\n   隐含增长率: {result.get('implied_growth_percent', 'N/A')}\n"
+                    formatted += f"   评估: {result['evaluation']}\n"
                     formatted += f"   WACC: {result['wacc']:.2%}, 永续增长率: {result['perpetual_growth_rate']:.2%}\n"
+                    formatted += f"   方法: {result.get('calculation_method', 'traditional_dcf')}\n"
+                    
+                    # 增强版DCF特有信息
+                    if result.get('enhanced_features', False):
+                        stage_analysis = result.get('stage_analysis')
+                        if stage_analysis:
+                            formatted += f"   发展阶段: {stage_analysis.stage} (置信度: {stage_analysis.confidence:.1%})\n"
+                        
+                        # 多场景估值简化显示
+                        model_valuations = result.get('model_valuations', {})
+                        if model_valuations:
+                            valuations = []
+                            for scenario_name, scenario_data in model_valuations.items():
+                                if 'error' not in scenario_data:
+                                    dcf_value = scenario_data.get('dcf_value', 0)
+                                    upside = (dcf_value - result['current_price']) / result['current_price'] * 100
+                                    valuations.append(f"{scenario_name}: ${dcf_value:.2f} ({upside:+.1f}%)")
+                            if valuations:
+                                formatted += f"   估值范围: {', '.join(valuations)}\n"
+                    
                 formatted += "-" * 40 + "\n"
         else:
             # 单个股票的结果
@@ -248,11 +306,69 @@ DCF模型关键参数说明（标准做法）：
                 formatted += f"当前价格: ${data['current_price']:.2f}\n"
                 formatted += f"内在价值: ${data['intrinsic_value']:.2f}\n"
                 formatted += f"年化收益率(IRR): {data['irr']:.1%}" if data['irr'] else "年化收益率(IRR): N/A"
-                formatted += f"\n评估结果: {data['evaluation']}\n"
+                formatted += f"\n隐含增长率: {data.get('implied_growth_percent', 'N/A')}\n"
+                formatted += f"评估结果: {data['evaluation']}\n"
                 formatted += f"\n主要估值参数：\n"
                 formatted += f"  折现率（WACC）: {data['wacc']:.2%}\n"
                 formatted += f"  永续增长率: {data['perpetual_growth_rate']:.2%}\n"
                 formatted += f"  最新自由现金流（FCF）: ${data['latest_fcf']:,}\n"
+                formatted += f"  计算方法: {data.get('calculation_method', 'traditional_dcf')}\n"
+                
+                # 增强版DCF特有信息
+                if data.get('enhanced_features', False):
+                    formatted += f"\n🚀 增强版DCF分析：\n"
+                    
+                    # 发展阶段
+                    stage_analysis = data.get('stage_analysis')
+                    if stage_analysis:
+                        formatted += f"  发展阶段：{stage_analysis.stage} (置信度: {stage_analysis.confidence:.1%})\n"
+                        if stage_analysis.key_drivers:
+                            formatted += f"  关键驱动因素：{', '.join(stage_analysis.key_drivers)}\n"
+                    
+                    # 多场景估值
+                    model_valuations = data.get('model_valuations', {})
+                    if model_valuations:
+                        formatted += f"  多场景估值：\n"
+                        for scenario_name, scenario_data in model_valuations.items():
+                            if 'error' not in scenario_data:
+                                dcf_value = scenario_data.get('dcf_value', 0)
+                                upside = (dcf_value - data['current_price']) / data['current_price'] * 100
+                                formatted += f"    {scenario_name}: ${dcf_value:.2f} ({upside:+.1f}%)\n"
+                    
+                    # 投资建议
+                    recommendation = data.get('recommendation', {})
+                    if recommendation:
+                        formatted += f"  投资建议：{recommendation.get('action', '未知')} - {recommendation.get('rationale', '无')}\n"
+                
+                formatted += f"\n行业分类: {data.get('damodaran_industry', 'N/A')}\n"
+                formatted += f"板块: {data.get('sector', 'N/A')}"
+        
+        return formatted
+    
+    
+    
+    def _format_reverse_dcf_result(self, data) -> str:
+        """格式化反向DCF结果"""
+        stock_data = data['stock_data']
+        reverse_dcf = data['reverse_dcf']
+        symbol = stock_data['symbol']
+        
+        formatted = f"🔮 {symbol} 反向DCF分析结果：\n"
+        formatted += "=" * 40 + "\n"
+        
+        formatted += f"📊 股票基本信息：\n"
+        formatted += f"- 当前价格：${stock_data['current_price']:.2f}\n"
+        formatted += f"- 股票名称：{stock_data.get('name', 'N/A')}\n"
+        formatted += f"- 行业板块：{stock_data.get('sector', 'N/A')}\n\n"
+        
+        if 'error' in reverse_dcf:
+            formatted += f"❌ 反向DCF分析失败: {reverse_dcf['error']}\n"
+        else:
+            formatted += f"🎯 市场隐含分析：\n"
+            formatted += f"- 隐含增长率：{reverse_dcf['implied_growth_percent']}\n"
+            formatted += f"- 合理性评分：{reverse_dcf['reasonableness_score']:.2f}/1.0\n"
+            formatted += f"- 可行性分析：{reverse_dcf['feasibility_analysis']}\n"
+            formatted += f"- 基准对比：{reverse_dcf['benchmark_comparison']}\n"
         
         return formatted
     
@@ -266,7 +382,16 @@ DCF模型关键参数说明（标准做法）：
                 continue
             
             if 'data' in result:
-                output += self._format_valuation_result(result['data'])
+                result_type = result.get('type', 'traditional')
+                
+                if result_type in ['enhanced', 'batch_enhanced']:
+                    output += self._format_valuation_result(result['data'])
+                elif result_type == 'comparison':
+                    output += "⚠️ DCF对比功能已不再支持，现在所有估值都使用增强版DCF模型。\n"
+                elif result_type == 'reverse':
+                    output += self._format_reverse_dcf_result(result['data'])
+                else:
+                    output += self._format_valuation_result(result['data'])
                 
                 # 如果是组合估值，显示组合信息
                 if 'portfolio_name' in result:

@@ -11,14 +11,17 @@ import json
 import os
 import logging
 from datetime import datetime
+from typing import List, Dict, Optional
 
 # 导入自定义模块
 from data_fetcher import StockDataFetcher
+from wacc_processor import WACCProcessor
 from wacc_updater import WACCUpdater
 from turbo_industry_mapper import TurboIndustryMapper
 from dcf_calculator import DCFCalculator
+from dcf_calculator import EnhancedDCFCalculator
 from report_generator import ReportGenerator
-from config import DEFAULT_WACC, PORTFOLIOS_FILE
+from config import DEFAULT_WACC, PORTFOLIOS_FILE, VALUATION_THRESHOLDS, VALUE_RATIO_THRESHOLDS
 
 # 设置日志
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -29,78 +32,56 @@ class ValuationSystem:
     
     def __init__(self):
         self.data_fetcher = StockDataFetcher()
-        self.wacc_updater = WACCUpdater()
-        self.industry_mapper = TurboIndustryMapper()
-        self.dcf_calculator = DCFCalculator()
+        self.dcf_calculator = DCFCalculator()  # 统一使用增强版DCF
         self.report_generator = ReportGenerator()
+        self.wacc_processor = WACCProcessor()
+        self.wacc_updater = WACCUpdater()
     
     def ensure_data_ready(self):
-        """确保数据准备就绪（优化版：延迟加载）"""
-        logger.info("检查数据准备状态...")
-        
-        # 不再强制预加载行业WACC数据，改为按需加载
-        # 这样可以大大减少启动时间，因为大部分情况下个股WACC都能计算成功
-        logger.info("✅ 采用延迟加载策略，行业WACC数据将在需要时加载")
-        
-        return True
+        """确保数据已准备好"""
+        try:
+            # 检查行业WACC数据是否存在
+            if not self.wacc_processor.is_data_available():
+                logger.info("行业WACC数据不可用，正在更新...")
+                self.wacc_updater.update_wacc_data()
+            
+            logger.info("数据检查完成")
+        except Exception as e:
+            logger.warning(f"数据准备检查失败: {e}")
     
     def get_wacc_for_stock(self, symbol, sector, industry):
-        """获取股票的WACC（优先使用个股WACC，行业WACC作为fallback）"""
-        # 首先尝试计算个股WACC
+        """获取股票的WACC"""
         try:
+            # 优先尝试个股WACC
             from individual_wacc_calculator import IndividualWACCCalculator
-            individual_calc = IndividualWACCCalculator()
-            individual_wacc_result = individual_calc.calculate_individual_wacc(symbol)
+            individual_wacc_calc = IndividualWACCCalculator()
+            individual_result = individual_wacc_calc.calculate_individual_wacc(symbol)
             
-            if 'error' not in individual_wacc_result:
-                # 个股WACC计算成功
-                wacc = individual_wacc_result['wacc']
-                mapping_source = "个股WACC"
-                damodaran_industry = f"个股计算 (原行业: {industry or sector or '未知'})"
-                logger.info(f"✅ {symbol}: 使用个股WACC={wacc:.2%}")
+            if 'error' not in individual_result:
+                wacc = individual_result['wacc']
+                logger.info(f"✅ {symbol}: 使用个股WACC {wacc:.2%}")
+                return wacc, '个股WACC', None
+            
+            # 个股WACC失败，使用行业WACC
+            logger.info(f"个股WACC计算失败，使用行业WACC作为备选")
+            
+            # 使用智能缓存系统
+            wacc_info = self.wacc_processor.get_industry_wacc(symbol, sector, industry)
+            
+            if wacc_info:
+                wacc = wacc_info['wacc']
+                mapping_source = wacc_info.get('mapping_source', '未知')
+                damodaran_industry = wacc_info.get('damodaran_industry', '未知')
+                
+                logger.info(f"✅ {symbol}: 使用行业WACC {wacc:.2%} (来源: {mapping_source})")
                 return wacc, mapping_source, damodaran_industry
             else:
-                logger.warning(f"⚠️ {symbol}: 个股WACC计算失败 - {individual_wacc_result['error']}")
+                logger.warning(f"⚠️ {symbol}: 无法获取行业WACC，使用默认值 {DEFAULT_WACC:.2%}")
+                return DEFAULT_WACC, '默认WACC', None
+                
         except Exception as e:
-            logger.warning(f"⚠️ {symbol}: 个股WACC计算异常 - {e}")
-        
-        # 个股WACC失败，fallback到行业WACC（开始按需加载）
-        logger.info(f"📊 {symbol}: 个股WACC不可用，开始按需加载行业WACC作为fallback")
-        
-        # 尝试从Turbo缓存获取行业WACC
-        wacc = self.industry_mapper.get_wacc_direct(symbol)
-        stock_info = self.industry_mapper.get_stock_info(symbol)
-        
-        if stock_info:
-            # 从Turbo缓存成功获取
-            damodaran_industry = stock_info.get('industry', '')
-            mapping_source = "行业WACC(Turbo缓存)"
-            logger.info(f"✅ {symbol}: Turbo缓存获取行业WACC={wacc:.2%}, 行业={damodaran_industry}")
-            return wacc, mapping_source, damodaran_industry
-        
-        # 如果Turbo缓存没有，尝试使用yfinance数据作为兜底（这里会触发按需加载）
-        logger.info(f"🔄 {symbol}: Turbo缓存未找到，开始按需加载Damodaran行业WACC数据...")
-        
-        if industry:
-            logger.info(f"🔍 {symbol}: 尝试yfinance行业: {industry}")
-            fallback_wacc = self.wacc_updater.get_wacc_for_industry(industry)
-            if fallback_wacc is not None:
-                logger.info(f"✅ {symbol}: 成功获取行业WACC={fallback_wacc:.2%}")
-                return fallback_wacc, "行业WACC(yfinance兜底)", industry
-            damodaran_industry = industry
-        elif sector:
-            logger.info(f"🔍 {symbol}: 尝试yfinance板块: {sector}")
-            fallback_wacc = self.wacc_updater.get_wacc_for_industry(sector)
-            if fallback_wacc is not None:
-                logger.info(f"✅ {symbol}: 成功获取行业WACC={fallback_wacc:.2%}")
-                return fallback_wacc, "行业WACC(yfinance兜底)", sector
-            damodaran_industry = sector
-        else:
-            damodaran_industry = "未知行业"
-        
-        # 使用默认WACC
-        logger.warning(f"⚠️ {symbol}: 所有WACC获取方式都失败，使用默认WACC {DEFAULT_WACC:.2%}")
-        return DEFAULT_WACC, "默认值", damodaran_industry
+            logger.error(f"❌ {symbol}: 获取WACC失败 - {e}")
+            return DEFAULT_WACC, '默认WACC', None
     
     def valuate_single_stock(self, symbol):
         """估值单个股票"""
@@ -121,7 +102,7 @@ class ValuationSystem:
             symbol, stock_data['sector'], stock_data['industry']
         )
         
-        # 执行DCF计算
+        # 执行DCF计算（现在内部使用增强版逻辑）
         dcf_result = self.dcf_calculator.calculate_dcf_valuation(stock_data, wacc)
         
         if 'error' in dcf_result:
@@ -145,6 +126,15 @@ class ValuationSystem:
             'evaluation': evaluation,
             'timestamp': datetime.now().isoformat()
         })
+        
+        # 如果使用了增强版计算，添加额外信息
+        if self.dcf_calculator.is_enhanced_calculation(dcf_result):
+            result['enhanced_features'] = True
+            enhanced_analysis = self.dcf_calculator.get_enhanced_analysis(dcf_result)
+            if enhanced_analysis:
+                result['stage_analysis'] = enhanced_analysis.get('stage_analysis')
+                result['growth_scenarios'] = enhanced_analysis.get('growth_scenarios')
+                result['market_implied'] = enhanced_analysis.get('market_implied')
         
         return result
     
@@ -248,109 +238,264 @@ class ValuationSystem:
         """手动更新WACC数据"""
         logger.info("手动更新WACC数据...")
         return self.wacc_updater.update_wacc_data()
+    
+    def analyze_stock_reverse_dcf(self, symbol):
+        """反向DCF分析"""
+        logger.info(f"开始反向DCF分析: {symbol}")
+        
+        # 获取股票数据
+        stock_data = self.data_fetcher.get_complete_data(symbol)
+        
+        if 'error' in stock_data:
+            return {
+                'symbol': symbol,
+                'error': stock_data['error'],
+                'timestamp': datetime.now().isoformat()
+            }
+        
+        # 获取WACC
+        wacc, mapping_source, damodaran_industry = self.get_wacc_for_stock(
+            symbol, stock_data['sector'], stock_data['industry']
+        )
+        
+        # 执行反向DCF计算
+        from dcf_calculator import ReverseDCFCalculator
+        reverse_dcf = ReverseDCFCalculator()
+        
+        reverse_result = reverse_dcf.calculate_implied_growth(
+            symbol, float(stock_data['current_price']), stock_data, wacc
+        )
+        
+        if 'error' in reverse_result:
+            return {
+                'symbol': symbol,
+                'error': reverse_result['error'],
+                'timestamp': datetime.now().isoformat()
+            }
+        
+        # 组装结果
+        result = {
+            'symbol': symbol,
+            'name': stock_data['name'],
+            'sector': stock_data['sector'],
+            'industry': stock_data['industry'],
+            'current_price': stock_data['current_price'],
+            'wacc': wacc,
+            'implied_growth': reverse_result,
+            'timestamp': datetime.now().isoformat()
+        }
+        
+        return result
+    
+    def batch_analyze_reverse_dcf(self, symbols):
+        """批量反向DCF分析"""
+        results = []
+        
+        for i, symbol in enumerate(symbols, 1):
+            logger.info(f"反向DCF分析第 {i}/{len(symbols)} 个股票: {symbol}")
+            
+            try:
+                result = self.analyze_stock_reverse_dcf(symbol)
+                results.append(result)
+            except Exception as e:
+                logger.error(f"反向DCF分析 {symbol} 时发生错误: {e}")
+                results.append({
+                    'symbol': symbol,
+                    'error': f'分析失败: {str(e)}',
+                    'timestamp': datetime.now().isoformat()
+                })
+        
+        return results
+    
+    def compare_traditional_vs_enhanced(self, symbol):
+        """对比传统DCF与增强版DCF（现在统一使用增强版）"""
+        logger.info(f"开始对比分析: {symbol}")
+        
+        # 获取股票数据
+        stock_data = self.data_fetcher.get_complete_data(symbol)
+        
+        if 'error' in stock_data:
+            return {
+                'symbol': symbol,
+                'error': stock_data['error'],
+                'timestamp': datetime.now().isoformat()
+            }
+        
+        # 获取WACC
+        wacc, mapping_source, damodaran_industry = self.get_wacc_for_stock(
+            symbol, stock_data['sector'], stock_data['industry']
+        )
+        
+        # 执行DCF计算（现在内部已经是增强版）
+        dcf_result = self.dcf_calculator.calculate_dcf_valuation(stock_data, wacc)
+        
+        if 'error' in dcf_result:
+            return {
+                'symbol': symbol,
+                'error': dcf_result['error'],
+                'timestamp': datetime.now().isoformat()
+            }
+        
+        # 获取增强版分析详情
+        enhanced_analysis = self.dcf_calculator.get_enhanced_analysis(dcf_result)
+        
+        # 组装结果
+        result = {
+            'symbol': symbol,
+            'name': stock_data['name'],
+            'sector': stock_data['sector'],
+            'industry': stock_data['industry'],
+            'current_price': stock_data['current_price'],
+            'wacc': wacc,
+            'unified_dcf_result': dcf_result,
+            'enhanced_analysis': enhanced_analysis,
+            'calculation_method': dcf_result.get('calculation_method', 'enhanced_dcf'),
+            'timestamp': datetime.now().isoformat()
+        }
+        
+        return result
 
 def main():
-    """主函数"""
+    """主程序"""
     parser = argparse.ArgumentParser(description='股票估值计算器')
-    parser.add_argument('symbols', nargs='*', help='股票代码 (例如: AAPL GOOGL)')
+    parser.add_argument('symbols', nargs='*', help='股票代码（多个用空格分隔）')
     parser.add_argument('--portfolio', '-p', help='使用股票组合')
-    parser.add_argument('--excel', '-e', action='store_true', help='导出到Excel')
+    parser.add_argument('--excel', '-e', action='store_true', help='生成Excel报告')
     parser.add_argument('--output', '-o', help='输出文件名')
-    parser.add_argument('--list-portfolios', action='store_true', help='列出所有股票组合')
-    parser.add_argument('--list-industries', action='store_true', help='列出所有可用行业')
-    parser.add_argument('--set-industry', nargs=2, metavar=('SYMBOL', 'INDUSTRY'), 
-                       help='设置股票的自定义行业 (例如: --set-industry AAPL "计算机与外设")')
-    parser.add_argument('--update-wacc', action='store_true', help='更新WACC数据')
-    parser.add_argument('--verbose', '-v', action='store_true', help='详细输出')
+    parser.add_argument('--industries', action='store_true', help='列出可用行业')
+    parser.add_argument('--portfolios', action='store_true', help='列出可用组合')
+    parser.add_argument('--update', action='store_true', help='更新WACC数据')
+    parser.add_argument('--reverse-dcf', action='store_true', help='反向DCF分析')
+    parser.add_argument('--compare', action='store_true', help='对比分析')
     
     args = parser.parse_args()
-    
-    # 设置日志级别
-    if args.verbose:
-        logging.getLogger().setLevel(logging.DEBUG)
     
     # 创建估值系统
     valuation_system = ValuationSystem()
     
-    # 处理各种命令
-    if args.list_portfolios:
-        valuation_system.list_portfolios()
-        return
-    
-    if args.list_industries:
+    # 处理不同的命令
+    if args.industries:
         valuation_system.list_industries()
         return
     
-    if args.set_industry:
-        symbol, industry = args.set_industry
-        if valuation_system.set_custom_industry(symbol, industry):
-            print(f"✅ 已设置 {symbol} 的行业为: {industry}")
-        else:
-            print(f"❌ 设置 {symbol} 的行业失败")
+    if args.portfolios:
+        valuation_system.list_portfolios()
         return
     
-    if args.update_wacc:
-        if valuation_system.update_wacc_data():
-            print("✅ WACC数据更新成功")
-        else:
-            print("❌ WACC数据更新失败")
+    if args.update:
+        valuation_system.update_wacc_data()
         return
     
-    # 确保数据准备就绪
-    if not valuation_system.ensure_data_ready():
-        logger.error("数据准备失败，退出程序")
-        sys.exit(1)
-    
-    # 提示用户缓存机制优化
-    logger.info("🚀 缓存机制已优化：优先使用个股WACC，行业WACC按需加载")
-    logger.info("💡 大多数情况下可直接使用个股WACC，启动更快速")
-    
-    # 获取要估值的股票列表
+    # 获取股票列表
     symbols = []
-    
     if args.portfolio:
-        # 使用组合
-        portfolio_stocks = valuation_system.load_portfolio(args.portfolio)
-        if portfolio_stocks:
-            symbols = portfolio_stocks
-            logger.info(f"使用组合 '{args.portfolio}': {symbols}")
+        portfolio_symbols = valuation_system.load_portfolio(args.portfolio)
+        if portfolio_symbols:
+            symbols = portfolio_symbols
         else:
-            sys.exit(1)
+            print(f"无法加载组合: {args.portfolio}")
+            return
     elif args.symbols:
-        # 使用命令行参数
         symbols = [s.upper() for s in args.symbols]
     else:
-        # 没有指定股票
-        parser.print_help()
-        sys.exit(1)
+        print("请指定股票代码或使用 --help 查看帮助")
+        return
     
-    if not symbols:
-        logger.error("没有指定要估值的股票")
-        sys.exit(1)
+    # 确保数据准备好
+    valuation_system.ensure_data_ready()
     
-    # 执行估值
-    logger.info(f"开始估值 {len(symbols)} 只股票: {symbols}")
+    print(f"\n准备分析 {len(symbols)} 个股票: {', '.join(symbols)}")
     
-    if len(symbols) == 1:
-        # 单个股票
-        result = valuation_system.valuate_single_stock(symbols[0])
-        results = [result]
+    # 执行分析
+    if args.reverse_dcf:
+        results = valuation_system.batch_analyze_reverse_dcf(symbols)
+        print("\n🔮 反向DCF分析结果:")
+        for result in results:
+            if 'error' in result:
+                print(f"❌ {result['symbol']}: {result['error']}")
+            else:
+                implied = result['implied_growth']
+                print(f"📊 {result['symbol']}: 市场隐含增长率 {implied['implied_growth_percent']}")
+    
+    elif args.compare:
+        results = []
+        for symbol in symbols:
+            result = valuation_system.compare_traditional_vs_enhanced(symbol)
+            results.append(result)
+        
+        print("\n📊 对比分析结果:")
+        for result in results:
+            if 'error' in result:
+                print(f"❌ {result['symbol']}: {result['error']}")
+            else:
+                method = result.get('calculation_method', 'enhanced_dcf')
+                dcf_result = result['unified_dcf_result']
+                intrinsic_value = dcf_result.get('intrinsic_value', 0)
+                current_price = result['current_price']
+                gap = (intrinsic_value - current_price) / current_price * 100
+                print(f"📈 {result['symbol']}: 估值 ${intrinsic_value:.2f} vs 现价 ${current_price:.2f} ({gap:+.1f}%) [方法: {method}]")
+    
     else:
-        # 多个股票
+        # 标准估值分析
         results = valuation_system.valuate_multiple_stocks(symbols)
-    
-    # 生成报告
-    valuation_system.report_generator.generate_console_report(results)
-    valuation_system.report_generator.print_statistics(results)
+        
+        # 显示结果
+        print("\n📊 估值结果:")
+        print("-" * 80)
+        
+        for result in results:
+            if 'error' in result:
+                print(f"❌ {result['symbol']}: {result['error']}")
+            else:
+                symbol = result['symbol']
+                name = result.get('name', 'N/A')
+                intrinsic_value = result.get('intrinsic_value', 0)
+                current_price = result.get('current_price', 0)
+                irr = result.get('irr', 0)
+                evaluation = result.get('evaluation', '无法评估')
+                implied_growth_percent = result.get('implied_growth_percent', 'N/A')
+                calculation_method = result.get('calculation_method', 'traditional_dcf')
+                
+                # 计算估值差距
+                if current_price > 0:
+                    gap = (intrinsic_value - current_price) / current_price * 100
+                    gap_str = f"{gap:+.1f}%"
+                else:
+                    gap_str = "N/A"
+                
+                print(f"📈 {symbol} ({name}): 估值 ${intrinsic_value:.2f} | 现价 ${current_price:.2f} | 差距 {gap_str}")
+                print(f"   IRR: {irr:.2%} | 隐含增长率: {implied_growth_percent} | 评估: {evaluation}")
+                print(f"   计算方法: {calculation_method}")
+                
+                # 显示发展阶段信息
+                stage_analysis = result.get('stage_analysis')
+                if stage_analysis:
+                    print(f"   发展阶段: {stage_analysis.stage} (置信度: {stage_analysis.confidence:.1%})")
+                    print(f"   关键驱动: {', '.join(stage_analysis.key_drivers)}")
+                    
+                    # 显示各场景估值
+                    model_valuations = result.get('model_valuations', {})
+                    if model_valuations:
+                        print(f"   场景估值: 保守 ${model_valuations.get('conservative', {}).get('dcf_value', 0):.2f} | "
+                              f"基准 ${model_valuations.get('base', {}).get('dcf_value', 0):.2f} | "
+                              f"乐观 ${model_valuations.get('optimistic', {}).get('dcf_value', 0):.2f}")
+                        
+                    # 显示投资建议
+                    recommendation = result.get('recommendation', {})
+                    if recommendation:
+                        print(f"   投资建议: {recommendation.get('action', 'N/A')} ({recommendation.get('rationale', 'N/A')})")
+                
+                print("-" * 80)
     
     # 生成Excel报告
     if args.excel:
-        filename = args.output if args.output else None
-        excel_file = valuation_system.report_generator.generate_excel_report(results, filename)
-        if excel_file:
-            print(f"\n📊 Excel报告已生成: {excel_file}")
-    
-    logger.info("估值完成")
+        output_file = args.output or f"估值报告_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+        
+        try:
+            valuation_system.report_generator.generate_excel_report(results, output_file)
+            print(f"✅ Excel报告已生成: {output_file}")
+        except Exception as e:
+            print(f"❌ Excel报告生成失败: {e}")
 
 if __name__ == "__main__":
     main() 

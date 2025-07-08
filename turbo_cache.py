@@ -140,7 +140,13 @@ class TurboCache:
             # 创建WACC查找字典 {(industry, region): wacc}
             wacc_lookup = {}
             for _, row in wacc_data.iterrows():
-                key = (row['industry'].lower().strip(), row['region'])
+                industry = row['industry']
+                # 确保industry是字符串类型
+                if industry is not None and industry == industry:  # 检查非NaN
+                    industry_str = str(industry).lower().strip()
+                else:
+                    industry_str = ''
+                key = (industry_str, row['region'])
                 wacc_lookup[key] = row['wacc']
             
             logger.info(f"📊 WACC查找表创建完成: {len(wacc_lookup)} 个条目")
@@ -161,13 +167,17 @@ class TurboCache:
             
             for _, row in df.iterrows():
                 symbol = row['symbol']
-                industry = row.get('Industry Group', '')
-                country = row.get('Country', '')
+                industry = row['Industry Group'] if 'Industry Group' in row else ''
+                country = row['Country'] if 'Country' in row else ''
                 
-                if pd.notna(symbol) and pd.notna(industry):
-                    # 根据国家选择相应的WACC地区
-                    region = country_mapping.get(country, 'US')  # 默认使用美国
-                    industry_clean = industry.lower().strip()
+                # 检查symbol和industry是否有效
+                if (symbol is not None and symbol == symbol and 
+                    industry is not None and industry == industry):  # 检查非NaN
+                    # 根据国家选择相应的WACC地区，确保country是字符串类型
+                    country_str = str(country) if (country is not None and country == country) else ''
+                    region = country_mapping.get(country_str, 'US')  # 默认使用美国
+                    # 确保industry是字符串类型
+                    industry_clean = str(industry).lower().strip() if (industry is not None and industry == industry) else ''
                     
                     # 查找WACC（优先使用对应国家的）
                     wacc = None
@@ -214,12 +224,12 @@ class TurboCache:
                     stock_wacc_mapping[symbol] = {  # 保持原始大小写（包含后缀）
                         'wacc': wacc,
                         'industry': industry,
-                        'company_name': row['company_clean'],
+                        'company_name': row['company_clean'] if 'company_clean' in row else '',
                         'country': country,
                         'region': region,
-                        'exchange': row.get('exchange', ''),
+                        'exchange': row['exchange'] if 'exchange' in row else '',
                         'wacc_source': wacc_source,
-                        'sector': row.get('Primary Sector', '')
+                        'sector': row['Primary Sector'] if 'Primary Sector' in row else ''
                     }
             
             logger.info(f"📈 WACC匹配统计: 找到={stats['found']}, 未找到={stats['not_found']}, 默认={stats['default']}")
@@ -323,8 +333,9 @@ class TurboCache:
         matches = []
         
         for symbol, info in self.stock_wacc_cache.items():
+            company_name = info.get('company_name', '') or ''
             if (query_lower in symbol.lower() or 
-                query_lower in info.get('company_name', '').lower()):
+                query_lower in company_name.lower()):
                 matches.append(symbol)
                 if len(matches) >= limit:
                     break

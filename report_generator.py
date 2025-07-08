@@ -78,11 +78,16 @@ class ReportGenerator:
         print(f"IRR (年化收益率): {valuation['irr']:.1%}" if valuation['irr'] else "IRR: 无法计算")
         print(f"评估结果: {valuation['evaluation']}")
         
+        # 新增：隐含增长率
+        implied_growth_percent = valuation.get('implied_growth_percent', 'N/A')
+        print(f"市场隐含增长率: {implied_growth_percent}")
+        
         # 估值参数
         print(f"\n估值参数:")
         print(f"  折现率 (WACC): {valuation['wacc']:.2%}")
         print(f"  永续增长率: {valuation['perpetual_growth_rate']:.2%}")
         print(f"  预测年数: {valuation['forecast_years']}年")
+        print(f"  计算方法: {valuation.get('calculation_method', 'traditional_dcf')}")
         
         # 财务数据
         print(f"\n财务数据:")
@@ -90,6 +95,42 @@ class ReportGenerator:
         print(f"  企业价值: ${valuation['enterprise_value']:,.0f}")
         print(f"  终值: ${valuation['terminal_value']:,.0f}")
         print(f"  流通股数: {valuation['shares_outstanding']:,.0f}")
+        
+        # 增强版DCF特有信息
+        if valuation.get('enhanced_features', False):
+            print(f"\n🚀 增强版DCF分析:")
+            
+            # 发展阶段
+            stage_analysis = valuation.get('stage_analysis')
+            if stage_analysis:
+                print(f"  发展阶段: {stage_analysis.stage} (置信度: {stage_analysis.confidence:.1%})")
+                if stage_analysis.key_drivers:
+                    print(f"  关键驱动因素: {', '.join(stage_analysis.key_drivers)}")
+            
+            # 多场景估值
+            model_valuations = valuation.get('model_valuations', {})
+            if model_valuations:
+                print(f"  多场景估值:")
+                for scenario_name, scenario_data in model_valuations.items():
+                    if 'error' not in scenario_data:
+                        dcf_value = scenario_data.get('dcf_value', 0)
+                        upside = (dcf_value - valuation['current_price']) / valuation['current_price'] * 100
+                        print(f"    {scenario_name}: ${dcf_value:.2f} ({upside:+.1f}%)")
+            
+            # 市场隐含分析
+            market_implied = valuation.get('market_implied', {})
+            if market_implied and 'error' not in market_implied:
+                print(f"  市场隐含分析:")
+                print(f"    合理性评分: {market_implied.get('reasonableness_score', 0):.2f}/1.0")
+                print(f"    可行性分析: {market_implied.get('feasibility_analysis', 'N/A')}")
+            
+            # 投资建议
+            recommendation = valuation.get('recommendation', {})
+            if recommendation:
+                print(f"  投资建议: {recommendation.get('action', '未知')} - {recommendation.get('rationale', '无')}")
+        
+        print(f"  行业分类: {valuation.get('damodaran_industry', 'N/A')}")
+        print(f"  板块: {valuation.get('sector', 'N/A')}")
     
     def generate_excel_report(self, valuations, filename=None):
         """生成Excel报告"""
@@ -140,7 +181,9 @@ class ReportGenerator:
                     '当前价格': None,
                     '内在价值': None,
                     'IRR': None,
+                    '隐含增长率': None,
                     '评估结果': valuation['error'],
+                    '计算方法': 'N/A',
                     '错误信息': valuation['error']
                 }
             else:
@@ -150,7 +193,9 @@ class ReportGenerator:
                     '当前价格': valuation['current_price'],
                     '内在价值': valuation['intrinsic_value'],
                     'IRR': valuation['irr'],
+                    '隐含增长率': valuation.get('implied_growth_percent', 'N/A'),
                     '评估结果': valuation['evaluation'],
+                    '计算方法': valuation.get('calculation_method', 'traditional_dcf'),
                     '错误信息': None
                 }
             
@@ -168,10 +213,13 @@ class ReportGenerator:
                 
             row = {
                 '股票代码': valuation['symbol'],
+                '公司名称': valuation.get('name', 'N/A'),
                 '当前价格': valuation['current_price'],
                 '内在价值': valuation['intrinsic_value'],
                 'IRR': valuation['irr'],
+                '隐含增长率': valuation.get('implied_growth_percent', 'N/A'),
                 '评估结果': valuation['evaluation'],
+                '计算方法': valuation.get('calculation_method', 'traditional_dcf'),
                 '折现率': valuation['wacc'],
                 '永续增长率': valuation['perpetual_growth_rate'],
                 '预测年数': valuation['forecast_years'],
@@ -179,7 +227,11 @@ class ReportGenerator:
                 '企业价值': valuation['enterprise_value'],
                 '终值': valuation['terminal_value'],
                 '终值现值': valuation['pv_terminal'],
-                '流通股数': valuation['shares_outstanding']
+                '流通股数': valuation['shares_outstanding'],
+                '行业分类': valuation.get('damodaran_industry', 'N/A'),
+                '板块': valuation.get('sector', 'N/A'),
+                '发展阶段': valuation.get('stage_analysis', {}).get('stage', 'N/A') if valuation.get('enhanced_features') else 'N/A',
+                '阶段置信度': valuation.get('stage_analysis', {}).get('confidence', 0) if valuation.get('enhanced_features') else 0,
             }
             
             detail_data.append(row)

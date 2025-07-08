@@ -50,7 +50,7 @@ class StockValuationMCP:
             return [
                 Tool(
                     name="valuate_stock",
-                    description="估值单个股票，使用DCF模型计算内在价值和IRR",
+                    description="估值单个股票，使用增强版DCF模型，包含动态增长率、发展阶段分析、多场景估值和投资建议",
                     inputSchema={
                         "type": "object",
                         "properties": {
@@ -64,7 +64,7 @@ class StockValuationMCP:
                 ),
                 Tool(
                     name="valuate_multiple_stocks",
-                    description="批量估值多个股票",
+                    description="批量估值多个股票，使用增强版DCF模型，提供完整的估值分析",
                     inputSchema={
                         "type": "object",
                         "properties": {
@@ -133,6 +133,21 @@ class StockValuationMCP:
                         },
                         "required": ["symbols"]
                     }
+                ),
+
+                Tool(
+                    name="reverse_dcf_analysis",
+                    description="反向DCF分析，计算市场隐含的增长率",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "symbol": {
+                                "type": "string",
+                                "description": "股票代码，如AAPL, GOOGL等"
+                            }
+                        },
+                        "required": ["symbol"]
+                    }
                 )
             ]
     
@@ -157,6 +172,9 @@ class StockValuationMCP:
                     return await self._handle_list_industries(arguments)
                 elif name == "generate_excel_report":
                     return await self._handle_generate_excel_report(arguments)
+
+                elif name == "reverse_dcf_analysis":
+                    return await self._handle_reverse_dcf_analysis(arguments)
                 else:
                     raise ValueError(f"未知工具: {name}")
                     
@@ -337,13 +355,41 @@ class StockValuationMCP:
         response += f"- 当前价格：${result['current_price']:.2f}\n"
         response += f"- 内在价值：${result['intrinsic_value']:.2f}\n"
         response += f"- 年化收益率（IRR）：{result['irr']:.1%}" if result['irr'] else "- 年化收益率（IRR）：N/A"
-        response += f"\n- 评估结论：{result['evaluation']}\n"
+        response += f"\n- 市场隐含增长率：{result.get('implied_growth_percent', 'N/A')}\n"
+        response += f"- 评估结论：{result['evaluation']}\n"
         
         response += f"\n主要估值参数：\n"
         response += f"- 折现率（WACC）：{result['wacc']:.2%}\n"
         response += f"- 永续增长率：{result['perpetual_growth_rate']:.2%}\n"
         response += f"- 最新自由现金流（FCF）：${result['latest_fcf']:,.2f}\n"
+        response += f"- 计算方法：{result.get('calculation_method', 'traditional_dcf')}\n"
         response += f"- 行业属性：{result.get('damodaran_industry', 'N/A')}"
+        
+        # 增强版DCF特有信息
+        if result.get('enhanced_features', False):
+            response += f"\n\n🚀 增强版DCF分析：\n"
+            
+            # 发展阶段
+            stage_analysis = result.get('stage_analysis')
+            if stage_analysis:
+                response += f"- 发展阶段：{stage_analysis.stage} (置信度: {stage_analysis.confidence:.1%})\n"
+                if stage_analysis.key_drivers:
+                    response += f"- 关键驱动因素：{', '.join(stage_analysis.key_drivers)}\n"
+            
+            # 多场景估值
+            model_valuations = result.get('model_valuations', {})
+            if model_valuations:
+                response += f"- 多场景估值：\n"
+                for scenario_name, scenario_data in model_valuations.items():
+                    if 'error' not in scenario_data:
+                        dcf_value = scenario_data.get('dcf_value', 0)
+                        upside = (dcf_value - result['current_price']) / result['current_price'] * 100
+                        response += f"  {scenario_name}: ${dcf_value:.2f} ({upside:+.1f}%)\n"
+            
+            # 投资建议
+            recommendation = result.get('recommendation', {})
+            if recommendation:
+                response += f"- 投资建议：{recommendation.get('action', '未知')} - {recommendation.get('rationale', '无')}\n"
         
         return response
     
@@ -359,9 +405,96 @@ class StockValuationMCP:
                 response += f"   当前价格: ${result['current_price']:.2f}\n"
                 response += f"   内在价值: ${result['intrinsic_value']:.2f}\n"
                 response += f"   IRR: {result['irr']:.1%}" if result['irr'] else "   IRR: N/A"
-                response += f"\n   评估: {result['evaluation']}\n"
+                response += f"\n   隐含增长率: {result.get('implied_growth_percent', 'N/A')}\n"
+                response += f"   评估: {result['evaluation']}\n"
                 response += f"   WACC: {result['wacc']:.2%}, 永续增长率: {result['perpetual_growth_rate']:.2%}\n"
+                response += f"   方法: {result.get('calculation_method', 'traditional_dcf')}\n"
+                
+                # 增强版DCF特有信息
+                if result.get('enhanced_features', False):
+                    stage_analysis = result.get('stage_analysis')
+                    if stage_analysis:
+                        response += f"   发展阶段: {stage_analysis.stage} (置信度: {stage_analysis.confidence:.1%})\n"
+                    
+                    # 多场景估值简化显示
+                    model_valuations = result.get('model_valuations', {})
+                    if model_valuations:
+                        valuations = []
+                        for scenario_name, scenario_data in model_valuations.items():
+                            if 'error' not in scenario_data:
+                                dcf_value = scenario_data.get('dcf_value', 0)
+                                upside = (dcf_value - result['current_price']) / result['current_price'] * 100
+                                valuations.append(f"{scenario_name}: ${dcf_value:.2f} ({upside:+.1f}%)")
+                        if valuations:
+                            response += f"   估值范围: {', '.join(valuations)}\n"
+                
             response += "-" * 40 + "\n"
+        
+        return response
+    
+    
+    
+    async def _handle_reverse_dcf_analysis(self, arguments: dict) -> list[types.TextContent]:
+        """处理反向DCF分析"""
+        symbol = arguments["symbol"].upper()
+        
+        try:
+            # 先获取基本数据
+            from data_fetcher import StockDataFetcher
+            data_fetcher = StockDataFetcher()
+            stock_data = data_fetcher.get_complete_data(symbol)
+            
+            if 'error' in stock_data:
+                return [types.TextContent(
+                    type="text",
+                    text=f"❌ 获取 {symbol} 数据失败: {stock_data['error']}"
+                )]
+            
+            # 获取WACC
+            wacc, _, _ = self.valuation_system.get_wacc_for_stock(
+                symbol, stock_data['sector'], stock_data['industry']
+            )
+            
+            # 执行反向DCF分析
+            from dcf_calculator import ReverseDCFCalculator
+            reverse_dcf = ReverseDCFCalculator()
+            
+            result = reverse_dcf.calculate_implied_growth(
+                symbol, float(stock_data['current_price']), stock_data, wacc
+            )
+            
+            if 'error' in result:
+                response = f"❌ {symbol} 反向DCF分析失败: {result['error']}"
+            else:
+                response = self._format_reverse_dcf_result(symbol, result, stock_data)
+            
+            return [types.TextContent(type="text", text=response)]
+            
+        except Exception as e:
+            return [types.TextContent(
+                type="text",
+                text=f"反向DCF分析 {symbol} 时发生错误: {str(e)}"
+            )]
+    
+
+    
+    
+    
+    def _format_reverse_dcf_result(self, symbol: str, result: dict, stock_data: dict) -> str:
+        """格式化反向DCF结果"""
+        response = f"🔮 {symbol} 反向DCF分析结果：\n"
+        response += "=" * 40 + "\n"
+        
+        response += f"📊 股票基本信息：\n"
+        response += f"- 当前价格：${stock_data['current_price']:.2f}\n"
+        response += f"- 股票名称：{stock_data.get('name', 'N/A')}\n"
+        response += f"- 行业板块：{stock_data.get('sector', 'N/A')}\n\n"
+        
+        response += f"🎯 市场隐含分析：\n"
+        response += f"- 隐含增长率：{result['implied_growth_percent']}\n"
+        response += f"- 合理性评分：{result['reasonableness_score']:.2f}/1.0\n"
+        response += f"- 可行性分析：{result['feasibility_analysis']}\n"
+        response += f"- 基准对比：{result['benchmark_comparison']}\n"
         
         return response
     

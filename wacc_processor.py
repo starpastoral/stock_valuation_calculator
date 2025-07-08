@@ -11,6 +11,17 @@ class WACCProcessor:
     def __init__(self, data_dir="data"):
         self.data_dir = Path(data_dir)
     
+    def is_data_available(self):
+        """检查WACC数据是否可用"""
+        wacc_files = {
+            'US': self.data_dir / 'waccUS.xls',
+            'China': self.data_dir / 'waccChina.xls', 
+            'Japan': self.data_dir / 'waccJapan.xls'
+        }
+        
+        # 检查是否至少有一个WACC文件存在
+        return any(file_path.exists() for file_path in wacc_files.values())
+    
     def process_all_wacc_files(self):
         """处理所有WACC文件并合并"""
         wacc_files = {
@@ -153,6 +164,31 @@ class WACCProcessor:
             return result_df
         else:
             logger.warning(f"{region}: 没有提取到有效数据")
+            return None
+    
+    def get_industry_wacc(self, symbol, sector, industry):
+        """获取行业WACC（与TurboCache集成）"""
+        try:
+            # 使用TurboCache获取WACC信息
+            from turbo_cache import TurboCache
+            cache = TurboCache()
+            stock_info = cache.get_stock_info(symbol)
+            
+            if stock_info:
+                wacc = stock_info.get('wacc', 0.12)  # 默认12%
+                wacc_source = stock_info.get('wacc_source', '默认值')
+                damodaran_industry = stock_info.get('industry', industry)
+                
+                return {
+                    'wacc': wacc,
+                    'mapping_source': wacc_source,
+                    'damodaran_industry': damodaran_industry
+                }
+            else:
+                return None
+                
+        except Exception as e:
+            logger.error(f"获取行业WACC失败: {e}")
             return None
 
 if __name__ == "__main__":

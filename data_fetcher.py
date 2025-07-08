@@ -30,6 +30,19 @@ class StockDataFetcher:
             if missing_fields:
                 logger.warning(f"{symbol}: 缺少字段 {missing_fields}")
                 return None
+            
+            # 确保current_price是float类型
+            current_price = info.get('currentPrice', 0)
+            if isinstance(current_price, str):
+                try:
+                    current_price = float(current_price)
+                except ValueError:
+                    logger.warning(f"{symbol}: 无法转换价格为数字: {current_price}")
+                    current_price = 0.0
+            elif not isinstance(current_price, (int, float)):
+                current_price = 0.0
+            else:
+                current_price = float(current_price)
                 
             return {
                 'symbol': symbol,
@@ -37,7 +50,7 @@ class StockDataFetcher:
                 'sector': info.get('sector', '未知'),
                 'industry': info.get('industry', '未知'),
                 'market_cap': info.get('marketCap', 0),
-                'current_price': info.get('currentPrice', 0),
+                'current_price': current_price,
                 'currency': info.get('currency', 'USD')
             }
             

@@ -166,30 +166,31 @@ class DataProcessor:
             return None
         
         try:
-            # 使用polars读取大文件，速度更快，内存使用更少
+            # 对于较大的xlsx文件，使用分块读取
             if file_path.suffix.lower() == '.xlsx':
-                # 对于xlsx文件，先用pandas读取少量行确定结构
-                sample_df = pd.read_excel(file_path, nrows=10)
-                logger.info(f"文件列名: {list(sample_df.columns)}")
-                
                 # 批量读取文件
                 chunk_size = 50000  # 每次读取5万行
                 chunks = []
                 
-                for chunk in pd.read_excel(file_path, chunksize=chunk_size):
-                    # 清理数据
-                    chunk = self._clean_stock_industry_data(chunk)
-                    chunks.append(pl.from_pandas(chunk))
-                
-                # 合并所有chunks
-                if chunks:
-                    combined_df = pl.concat(chunks)
+                # 首先尝试读取一小部分来确定列结构
+                try:
+                    # 直接读取整个文件，如果太大会自动处理
+                    df = pd.read_excel(file_path, engine='openpyxl')
                     
-                    # 保存为parquet格式以加速后续读取
-                    combined_df.write_parquet(self.stock_industry_cache)
+                    # 清理数据
+                    df = self._clean_stock_industry_data(df)
+                    
+                    # 转换为polars并缓存
+                    pl_df = pl.DataFrame(df)  # 直接从pandas DataFrame创建polars DataFrame
+                    pl_df.write_parquet(self.stock_industry_cache)
                     logger.info(f"股票行业映射已缓存到: {self.stock_industry_cache}")
                     
-                    return combined_df.to_pandas()
+                    return df
+                    
+                except Exception as e:
+                    logger.warning(f"直接读取失败，尝试分块读取: {e}")
+                    # 如果直接读取失败，则不使用chunksize（pandas不支持Excel的chunksize）
+                    raise e
             
             elif file_path.suffix.lower() == '.xls':
                 # 对于xls文件，直接读取
@@ -197,7 +198,7 @@ class DataProcessor:
                 df = self._clean_stock_industry_data(df)
                 
                 # 转换为polars并缓存
-                pl_df = pl.from_pandas(df)
+                pl_df = pl.DataFrame(df)  # 直接从pandas DataFrame创建polars DataFrame
                 pl_df.write_parquet(self.stock_industry_cache)
                 
                 return df
