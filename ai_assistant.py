@@ -28,6 +28,7 @@ from rich.markdown import Markdown
 # 导入估值系统模块
 from valuation import ValuationSystem
 from config import PORTFOLIOS_FILE
+from currency_formatter import format_price, format_large_number, format_percentage, get_currency_from_result
 
 # 设置日志
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -270,8 +271,8 @@ DCF模型关键参数说明（标准做法）：
                     formatted += f"❌ {result['symbol']}: {result['error']}\n"
                 else:
                     formatted += f"✅ {result['symbol']} ({result.get('name', 'N/A')})\n"
-                    formatted += f"   当前价格: ${result['current_price']:.2f}\n"
-                    formatted += f"   内在价值: ${result['intrinsic_value']:.2f}\n"
+                    formatted += f"   当前价格: {format_price(result['current_price'], result)}\n"
+                    formatted += f"   内在价值: {format_price(result['intrinsic_value'], result)}\n"
                     formatted += f"   年化收益率(IRR): {result['irr']:.1%}" if result['irr'] else "   年化收益率(IRR): N/A"
                     formatted += f"\n   隐含增长率: {result.get('implied_growth_percent', 'N/A')}\n"
                     formatted += f"   评估: {result['evaluation']}\n"
@@ -292,7 +293,7 @@ DCF模型关键参数说明（标准做法）：
                                 if 'error' not in scenario_data:
                                     dcf_value = scenario_data.get('dcf_value', 0)
                                     upside = (dcf_value - result['current_price']) / result['current_price'] * 100
-                                    valuations.append(f"{scenario_name}: ${dcf_value:.2f} ({upside:+.1f}%)")
+                                    valuations.append(f"{scenario_name}: {format_price(dcf_value, result)} ({upside:+.1f}%)")
                             if valuations:
                                 formatted += f"   估值范围: {', '.join(valuations)}\n"
                     
@@ -303,15 +304,15 @@ DCF模型关键参数说明（标准做法）：
                 formatted = f"❌ {data['symbol']}: {data['error']}"
             else:
                 formatted = f"✅ {data['symbol']} ({data.get('name', 'N/A')}) 估值结果：\n"
-                formatted += f"当前价格: ${data['current_price']:.2f}\n"
-                formatted += f"内在价值: ${data['intrinsic_value']:.2f}\n"
+                formatted += f"当前价格: {format_price(data['current_price'], data)}\n"
+                formatted += f"内在价值: {format_price(data['intrinsic_value'], data)}\n"
                 formatted += f"年化收益率(IRR): {data['irr']:.1%}" if data['irr'] else "年化收益率(IRR): N/A"
                 formatted += f"\n隐含增长率: {data.get('implied_growth_percent', 'N/A')}\n"
                 formatted += f"评估结果: {data['evaluation']}\n"
                 formatted += f"\n主要估值参数：\n"
                 formatted += f"  折现率（WACC）: {data['wacc']:.2%}\n"
                 formatted += f"  永续增长率: {data['perpetual_growth_rate']:.2%}\n"
-                formatted += f"  最新自由现金流（FCF）: ${data['latest_fcf']:,}\n"
+                formatted += f"  最新自由现金流（FCF）: {format_large_number(data['latest_fcf'], data)}\n"
                 formatted += f"  计算方法: {data.get('calculation_method', 'traditional_dcf')}\n"
                 
                 # 增强版DCF特有信息
@@ -333,7 +334,7 @@ DCF模型关键参数说明（标准做法）：
                             if 'error' not in scenario_data:
                                 dcf_value = scenario_data.get('dcf_value', 0)
                                 upside = (dcf_value - data['current_price']) / data['current_price'] * 100
-                                formatted += f"    {scenario_name}: ${dcf_value:.2f} ({upside:+.1f}%)\n"
+                                formatted += f"    {scenario_name}: {format_price(dcf_value, data)} ({upside:+.1f}%)\n"
                     
                     # 投资建议
                     recommendation = data.get('recommendation', {})
@@ -357,7 +358,7 @@ DCF模型关键参数说明（标准做法）：
         formatted += "=" * 40 + "\n"
         
         formatted += f"📊 股票基本信息：\n"
-        formatted += f"- 当前价格：${stock_data['current_price']:.2f}\n"
+        formatted += f"- 当前价格：{format_price(stock_data['current_price'], currency_code=stock_data.get('currency', 'USD'))}\n"
         formatted += f"- 股票名称：{stock_data.get('name', 'N/A')}\n"
         formatted += f"- 行业板块：{stock_data.get('sector', 'N/A')}\n\n"
         

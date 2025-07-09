@@ -5,6 +5,7 @@ from datetime import datetime
 import os
 import logging
 from config import OUTPUT_DIR
+from currency_formatter import format_price, format_large_number, format_percentage, get_currency_from_result
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -44,8 +45,8 @@ class ReportGenerator:
             else:
                 summary_data.append({
                     '股票代码': valuation['symbol'],
-                    '当前价格': f"${valuation['current_price']:.2f}",
-                    '内在价值': f"${valuation['intrinsic_value']:.2f}",
+                                '当前价格': format_price(valuation['current_price'], valuation),
+            '内在价值': format_price(valuation['intrinsic_value'], valuation),
                     'IRR': f"{valuation['irr']:.1%}" if valuation['irr'] else 'N/A',
                     '评估': valuation['evaluation']
                 })
@@ -73,8 +74,8 @@ class ReportGenerator:
             return
         
         # 基本信息
-        print(f"当前价格: ${valuation['current_price']:.2f}")
-        print(f"内在价值: ${valuation['intrinsic_value']:.2f}")
+        print(f"当前价格: {format_price(valuation['current_price'], valuation)}")
+        print(f"内在价值: {format_price(valuation['intrinsic_value'], valuation)}")
         print(f"IRR (年化收益率): {valuation['irr']:.1%}" if valuation['irr'] else "IRR: 无法计算")
         print(f"评估结果: {valuation['evaluation']}")
         
@@ -91,9 +92,9 @@ class ReportGenerator:
         
         # 财务数据
         print(f"\n财务数据:")
-        print(f"  最新自由现金流: ${valuation['latest_fcf']:,.0f}")
-        print(f"  企业价值: ${valuation['enterprise_value']:,.0f}")
-        print(f"  终值: ${valuation['terminal_value']:,.0f}")
+        print(f"  最新自由现金流: {format_large_number(valuation['latest_fcf'], valuation)}")
+        print(f"  企业价值: {format_large_number(valuation['enterprise_value'], valuation)}")
+        print(f"  终值: {format_large_number(valuation['terminal_value'], valuation)}")
         print(f"  流通股数: {valuation['shares_outstanding']:,.0f}")
         
         # 增强版DCF特有信息
@@ -115,7 +116,7 @@ class ReportGenerator:
                     if 'error' not in scenario_data:
                         dcf_value = scenario_data.get('dcf_value', 0)
                         upside = (dcf_value - valuation['current_price']) / valuation['current_price'] * 100
-                        print(f"    {scenario_name}: ${dcf_value:.2f} ({upside:+.1f}%)")
+                        print(f"    {scenario_name}: {format_price(dcf_value, valuation)} ({upside:+.1f}%)")
             
             # 市场隐含分析
             market_implied = valuation.get('market_implied', {})

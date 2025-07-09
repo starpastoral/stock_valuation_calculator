@@ -23,6 +23,7 @@ from turbo_industry_mapper import TurboIndustryMapper
 from dcf_calculator import DCFCalculator
 from dcf_calculator import EnhancedDCFCalculator
 from report_generator import ReportGenerator
+from currency_formatter import format_price, format_large_number, format_percentage, get_currency_from_result
 from config import DEFAULT_WACC, PORTFOLIOS_FILE, VALUATION_THRESHOLDS, VALUE_RATIO_THRESHOLDS
 
 # 设置日志
@@ -129,6 +130,8 @@ class ValuationSystem:
             'damodaran_industry': damodaran_industry,
             'mapping_source': mapping_source,
             'evaluation': evaluation,
+            'target_currency': stock_data.get('target_currency', 'USD'),
+            'currency': stock_data.get('currency', 'USD'),
             'timestamp': datetime.now().isoformat()
         })
         
@@ -577,6 +580,49 @@ class ValuationSystem:
         
         return result
 
+class IndividualWACCCalculator:
+    """
+    个股WACC计算器
+    使用Alpha Vantage API获取个股数据，并计算WACC
+    """
+    def __init__(self):
+        self.alpha_vantage_api_key = os.environ.get("ALPHA_VANTAGE_API_KEY")
+        if not self.alpha_vantage_api_key:
+            raise ValueError("ALPHA_VANTAGE_API_KEY 环境变量未设置")
+        self.base_url = "https://www.alphavantage.co/query"
+        self.wacc_data = {}
+        self.data_processor = None # 新增：数据处理器
+
+    def calculate_individual_wacc(self, symbol):
+        """计算个股WACC"""
+        try:
+            from individual_wacc_calculator import IndividualWACCCalculator
+            from data_processor import DataProcessor
+            
+            calculator = IndividualWACCCalculator()
+            wacc_result = calculator.calculate_individual_wacc(symbol)
+            
+            if wacc_result and 'wacc' in wacc_result:
+                # 🔧 重要修复：对WACC极端值进行修正
+                processor = DataProcessor()
+                original_wacc = wacc_result['wacc']
+                corrected_wacc = processor.fix_wacc_extremes(original_wacc, symbol)
+                
+                if abs(corrected_wacc - original_wacc) > 0.001:  # 如果有修正
+                    logger.warning(f"{symbol}: WACC修正 {original_wacc:.4f} -> {corrected_wacc:.4f}")
+                    wacc_result['wacc'] = corrected_wacc
+                    wacc_result['wacc_original'] = original_wacc
+                    wacc_result['wacc_corrected'] = True
+                
+                return wacc_result['wacc']
+            else:
+                logger.warning(f"{symbol}: 无法计算个股WACC，使用行业WACC")
+                return None
+                
+        except Exception as e:
+            logger.error(f"计算个股WACC失败: {e}")
+            return None
+
 def main():
     """主程序"""
     parser = argparse.ArgumentParser(description='股票估值计算器')
@@ -656,7 +702,8 @@ def main():
                 intrinsic_value = dcf_result.get('intrinsic_value', 0)
                 current_price = result['current_price']
                 gap = (intrinsic_value - current_price) / current_price * 100
-                print(f"📈 {result['symbol']}: 估值 ${intrinsic_value:.2f} vs 现价 ${current_price:.2f} ({gap:+.1f}%) [方法: {method}]")
+                currency = get_currency_from_result(result)
+                print(f"📈 {result['symbol']}: 估值 {format_price(intrinsic_value, result)} vs 现价 {format_price(current_price, result)} ({gap:+.1f}%) [方法: {method}]")
     
     elif args.performance_test:
         # 运行性能测试
@@ -692,7 +739,8 @@ def main():
                 else:
                     gap_str = "N/A"
                 
-                print(f"📈 {symbol} ({name}): 估值 ${intrinsic_value:.2f} | 现价 ${current_price:.2f} | 差距 {gap_str}")
+                currency = get_currency_from_result(result)
+                print(f"📈 {symbol} ({name}): 估值 {format_price(intrinsic_value, result)} | 现价 {format_price(current_price, result)} | 差距 {gap_str}")
                 print(f"   IRR: {irr:.2%} | 隐含增长率: {implied_growth_percent} | 评估: {evaluation}")
                 print(f"   计算方法: {calculation_method}")
                 
@@ -705,9 +753,12 @@ def main():
                     # 显示各场景估值
                     model_valuations = result.get('model_valuations', {})
                     if model_valuations:
-                        print(f"   场景估值: 保守 ${model_valuations.get('conservative', {}).get('dcf_value', 0):.2f} | "
-                              f"基准 ${model_valuations.get('base', {}).get('dcf_value', 0):.2f} | "
-                              f"乐观 ${model_valuations.get('optimistic', {}).get('dcf_value', 0):.2f}")
+                                            conservative_val = model_valuations.get('conservative', {}).get('dcf_value', 0)
+                    base_val = model_valuations.get('base', {}).get('dcf_value', 0)
+                    optimistic_val = model_valuations.get('optimistic', {}).get('dcf_value', 0)
+                    print(f"   场景估值: 保守 {format_price(conservative_val, result)} | "
+                          f"基准 {format_price(base_val, result)} | "
+                          f"乐观 {format_price(optimistic_val, result)}")
                         
                     # 显示投资建议
                     recommendation = result.get('recommendation', {})

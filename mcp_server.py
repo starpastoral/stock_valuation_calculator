@@ -22,6 +22,7 @@ import mcp.types as types
 # 导入估值系统
 from valuation import ValuationSystem
 from report_generator import ReportGenerator
+from currency_formatter import format_price, format_large_number, format_percentage, get_currency_from_result
 
 # 设置日志
 logging.basicConfig(level=logging.INFO)
@@ -352,8 +353,8 @@ class StockValuationMCP:
             return f"❌ {result['symbol']}: {result['error']}"
         
         response = f"✅ {result['symbol']} ({result.get('name', 'N/A')}) 估值结果：\n"
-        response += f"- 当前价格：${result['current_price']:.2f}\n"
-        response += f"- 内在价值：${result['intrinsic_value']:.2f}\n"
+        response += f"- 当前价格：{format_price(result['current_price'], result)}\n"
+        response += f"- 内在价值：{format_price(result['intrinsic_value'], result)}\n"
         response += f"- 年化收益率（IRR）：{result['irr']:.1%}" if result['irr'] else "- 年化收益率（IRR）：N/A"
         response += f"\n- 市场隐含增长率：{result.get('implied_growth_percent', 'N/A')}\n"
         response += f"- 评估结论：{result['evaluation']}\n"
@@ -361,7 +362,7 @@ class StockValuationMCP:
         response += f"\n主要估值参数：\n"
         response += f"- 折现率（WACC）：{result['wacc']:.2%}\n"
         response += f"- 永续增长率：{result['perpetual_growth_rate']:.2%}\n"
-        response += f"- 最新自由现金流（FCF）：${result['latest_fcf']:,.2f}\n"
+        response += f"- 最新自由现金流（FCF）：{format_large_number(result['latest_fcf'], result)}\n"
         response += f"- 计算方法：{result.get('calculation_method', 'traditional_dcf')}\n"
         response += f"- 行业属性：{result.get('damodaran_industry', 'N/A')}"
         
@@ -384,7 +385,7 @@ class StockValuationMCP:
                     if 'error' not in scenario_data:
                         dcf_value = scenario_data.get('dcf_value', 0)
                         upside = (dcf_value - result['current_price']) / result['current_price'] * 100
-                        response += f"  {scenario_name}: ${dcf_value:.2f} ({upside:+.1f}%)\n"
+                        response += f"  {scenario_name}: {format_price(dcf_value, result)} ({upside:+.1f}%)\n"
             
             # 投资建议
             recommendation = result.get('recommendation', {})
@@ -402,8 +403,8 @@ class StockValuationMCP:
                 response += f"❌ {result['symbol']}: {result['error']}\n"
             else:
                 response += f"✅ {result['symbol']} ({result.get('name', 'N/A')})\n"
-                response += f"   当前价格: ${result['current_price']:.2f}\n"
-                response += f"   内在价值: ${result['intrinsic_value']:.2f}\n"
+                response += f"   当前价格: {format_price(result['current_price'], result)}\n"
+                response += f"   内在价值: {format_price(result['intrinsic_value'], result)}\n"
                 response += f"   IRR: {result['irr']:.1%}" if result['irr'] else "   IRR: N/A"
                 response += f"\n   隐含增长率: {result.get('implied_growth_percent', 'N/A')}\n"
                 response += f"   评估: {result['evaluation']}\n"
@@ -424,7 +425,7 @@ class StockValuationMCP:
                             if 'error' not in scenario_data:
                                 dcf_value = scenario_data.get('dcf_value', 0)
                                 upside = (dcf_value - result['current_price']) / result['current_price'] * 100
-                                valuations.append(f"{scenario_name}: ${dcf_value:.2f} ({upside:+.1f}%)")
+                                valuations.append(f"{scenario_name}: {format_price(dcf_value, result)} ({upside:+.1f}%)")
                         if valuations:
                             response += f"   估值范围: {', '.join(valuations)}\n"
                 
@@ -486,7 +487,7 @@ class StockValuationMCP:
         response += "=" * 40 + "\n"
         
         response += f"📊 股票基本信息：\n"
-        response += f"- 当前价格：${stock_data['current_price']:.2f}\n"
+        response += f"- 当前价格：{format_price(stock_data['current_price'], currency_code=stock_data.get('currency', 'USD'))}\n"
         response += f"- 股票名称：{stock_data.get('name', 'N/A')}\n"
         response += f"- 行业板块：{stock_data.get('sector', 'N/A')}\n\n"
         

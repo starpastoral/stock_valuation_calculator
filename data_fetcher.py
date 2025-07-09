@@ -202,6 +202,28 @@ class StockDataFetcher:
             else:
                 fcf_converted[date] = value
         
+        # 🔧 重要修复：计算历史现金流增长率
+        from data_processor import DataProcessor
+        processor = DataProcessor()
+        
+        # 计算历史现金流增长率
+        historical_fcf_growth = processor.calculate_historical_growth(fcf, "cash_flow")
+        
+        # 货币一致性验证
+        currency_validation = processor.validate_currency_consistency(
+            symbol, stock_info['current_price'], latest_fcf_converted, 
+            {'target_currency': target_currency}
+        )
+        
+        # 如果货币不一致，应用修正
+        if not currency_validation.get('is_consistent', True):
+            logger.warning(f"{symbol}: {currency_validation}")
+            if 'suggested_fcf' in currency_validation:
+                latest_fcf_converted = currency_validation['suggested_fcf']
+                # 同时修正历史现金流
+                correction_factor = currency_validation['suggested_fcf'] / latest_fcf_converted if latest_fcf_converted != 0 else 1
+                fcf_converted = {date: value * correction_factor for date, value in fcf_converted.items()}
+        
         # 获取货币信息
         currency_info = self.currency_converter.get_currency_info(symbol)
         
@@ -209,6 +231,9 @@ class StockDataFetcher:
         shares_outstanding = self.get_shares_outstanding(symbol)
         if shares_outstanding is None:
             return {"error": "无法获取流通股数"}
+        
+        # 🔧 计算额外的收入增长率作为参考
+        revenue_growth = self._calculate_revenue_growth(symbol)
         
         return {
             'symbol': symbol,
@@ -221,10 +246,46 @@ class StockDataFetcher:
             'free_cash_flow': fcf_converted,
             'latest_fcf': latest_fcf_converted,
             'latest_fcf_original': latest_fcf_original,
+            'historical_fcf_growth': historical_fcf_growth,  # 🔧 新增：历史现金流增长率
+            'historical_revenue_growth': revenue_growth,     # 🔧 新增：历史收入增长率（作为参考）
             'exchange_rate': exchange_rate,
             'source_currency': source_currency,
             'target_currency': target_currency,
             'currency_info': currency_info,
+            'currency_validation': currency_validation,      # 🔧 新增：货币验证信息
             'shares_outstanding': shares_outstanding,
             'data_date': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        } 
+        }
+    
+    def _calculate_revenue_growth(self, symbol):
+        """计算历史收入增长率"""
+        try:
+            import yfinance as yf
+            ticker = yf.Ticker(symbol)
+            financials = ticker.financials
+            
+            if financials.empty:
+                logger.warning(f"{symbol}: 无法获取收入数据")
+                return 0.05
+            
+            if 'Total Revenue' not in financials.index:
+                logger.warning(f"{symbol}: 无法找到收入数据")
+                return 0.05
+            
+            revenue = financials.loc['Total Revenue']
+            revenue_sorted = revenue.sort_index()  # 按时间排序
+            
+            if len(revenue_sorted) < 3:
+                logger.warning(f"{symbol}: 收入历史数据不足")
+                return 0.05
+            
+            # 使用DataProcessor计算增长率
+            from data_processor import DataProcessor
+            processor = DataProcessor()
+            growth_rate = processor.calculate_historical_growth(revenue_sorted, "revenue")
+            
+            return growth_rate
+            
+        except Exception as e:
+            logger.error(f"计算 {symbol} 收入增长率失败: {e}")
+            return 0.05 

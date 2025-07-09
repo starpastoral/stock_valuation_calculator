@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 # 数据处理模块 - 处理xls文件转换和优化
 import pandas as pd
 import numpy as np
@@ -23,6 +24,163 @@ class DataProcessor:
         self.wacc_cache = self.cache_dir / "wacc_data.parquet"
         self.industry_cache = self.cache_dir / "industry_mapping.parquet"
         self.stock_industry_cache = self.cache_dir / "stock_industry_mapping.parquet"
+    
+    def calculate_historical_growth(self, fcf_data, data_type="cash_flow"):
+        """
+        计算历史增长率 - 修复版本
+        
+        Args:
+            fcf_data: 历史现金流数据（从新到旧排序）
+            data_type: 数据类型（"cash_flow" 或 "revenue"）
+        
+        Returns:
+            float: 年化增长率
+        """
+        try:
+            # 过滤有效数据
+            if isinstance(fcf_data, pd.Series):
+                valid_data = [x for x in fcf_data.values if pd.notna(x) and x > 0]
+            elif isinstance(fcf_data, list):
+                valid_data = [x for x in fcf_data if pd.notna(x) and x > 0]
+            else:
+                logger.warning(f"不支持的数据类型: {type(fcf_data)}")
+                return 0.05
+            
+            if len(valid_data) < 3:
+                logger.warning("历史数据不足，使用默认增长率")
+                return 0.05
+            
+            # 计算年化增长率（从最早到最新）
+            start_value = valid_data[-1]  # 最早的值
+            end_value = valid_data[0]     # 最新的值
+            years = len(valid_data) - 1
+            
+            if start_value <= 0:
+                return 0.05
+            
+            growth_rate = (end_value / start_value) ** (1/years) - 1
+            
+            # 🔧 重要修复：对极端增长率进行合理处理
+            if data_type == "cash_flow":
+                # 现金流增长率限制
+                if growth_rate > 0.8:  # 80%以上
+                    logger.warning(f"极端现金流增长率 {growth_rate:.2%}，调整为25%")
+                    growth_rate = 0.25
+                elif growth_rate > 0.5:  # 50%-80%
+                    logger.warning(f"高现金流增长率 {growth_rate:.2%}，调整为35%")
+                    growth_rate = 0.35
+                elif growth_rate < -0.3:  # -30%以下
+                    logger.warning(f"负现金流增长率 {growth_rate:.2%}，调整为5%")
+                    growth_rate = 0.05
+            else:
+                # 收入增长率限制
+                if growth_rate > 0.6:  # 60%以上
+                    logger.warning(f"极端收入增长率 {growth_rate:.2%}，调整为20%")
+                    growth_rate = 0.20
+                elif growth_rate < -0.2:  # -20%以下
+                    logger.warning(f"负收入增长率 {growth_rate:.2%}，调整为3%")
+                    growth_rate = 0.03
+            
+            logger.info(f"历史{data_type}增长率: {growth_rate:.2%}")
+            return growth_rate
+            
+        except Exception as e:
+            logger.error(f"计算历史增长率失败: {e}")
+            return 0.05
+    
+    def validate_currency_consistency(self, symbol, stock_price, fcf_value, currency_info):
+        """
+        验证货币单位一致性
+        
+        Args:
+            symbol: 股票代码
+            stock_price: 股票价格
+            fcf_value: 自由现金流值
+            currency_info: 货币信息
+        
+        Returns:
+            dict: 验证结果和修正建议
+        """
+        try:
+            # 获取预期货币
+            if '.SS' in symbol or '.SZ' in symbol:
+                expected_currency = 'CNY'
+            elif '.HK' in symbol:
+                expected_currency = 'HKD'
+            elif '.T' in symbol:
+                expected_currency = 'JPY'
+            else:
+                expected_currency = 'USD'
+            
+            actual_currency = currency_info.get('target_currency', 'USD')
+            
+            result = {
+                'symbol': symbol,
+                'expected_currency': expected_currency,
+                'actual_currency': actual_currency,
+                'is_consistent': expected_currency == actual_currency,
+                'stock_price': stock_price,
+                'fcf_value': fcf_value
+            }
+            
+            if not result['is_consistent']:
+                logger.warning(f"{symbol}: 货币单位不一致！预期{expected_currency}，实际{actual_currency}")
+                
+                # 提供修正建议
+                if expected_currency == 'CNY' and actual_currency == 'USD':
+                    # 中国股票应该用人民币
+                    usd_to_cny = 7.2  # 近似汇率
+                    result['suggested_fcf'] = fcf_value * usd_to_cny
+                    result['correction_note'] = f"自由现金流应转换为人民币: {result['suggested_fcf']:,.0f}"
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"货币一致性验证失败: {e}")
+            return {'is_consistent': False, 'error': str(e)}
+
+    def fix_wacc_extremes(self, wacc_value, symbol, company_info=None):
+        """
+        修正极端WACC值
+        
+        Args:
+            wacc_value: 计算得到的WACC值
+            symbol: 股票代码
+            company_info: 公司信息
+        
+        Returns:
+            float: 修正后的WACC值
+        """
+        try:
+            original_wacc = wacc_value
+            
+            # 设置合理的WACC范围
+            if '.SS' in symbol or '.SZ' in symbol:
+                # 中国股票
+                min_wacc, max_wacc = 0.06, 0.18
+            elif '.HK' in symbol:
+                # 香港股票
+                min_wacc, max_wacc = 0.05, 0.16
+            elif '.T' in symbol:
+                # 日本股票
+                min_wacc, max_wacc = 0.04, 0.14
+            else:
+                # 美国股票
+                min_wacc, max_wacc = 0.05, 0.20
+            
+            # 修正极端值
+            if wacc_value < min_wacc:
+                wacc_value = min_wacc
+                logger.warning(f"{symbol}: WACC过低 {original_wacc:.4f} -> {wacc_value:.4f}")
+            elif wacc_value > max_wacc:
+                wacc_value = max_wacc
+                logger.warning(f"{symbol}: WACC过高 {original_wacc:.4f} -> {wacc_value:.4f}")
+            
+            return wacc_value
+            
+        except Exception as e:
+            logger.error(f"修正WACC极端值失败: {e}")
+            return 0.10  # 默认值
     
     def convert_wacc_files(self):
         """转换WACC xls文件为高效的parquet格式"""

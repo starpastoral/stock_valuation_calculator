@@ -9,6 +9,9 @@ from scipy.optimize import brentq
 from dataclasses import dataclass
 from config import PERPETUAL_GROWTH_RATE, FORECAST_YEARS, DEFAULT_WACC
 
+# 使用新的独立阶段识别模块
+from stage_identifier import CompanyStageIdentifier, StageInfo
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -22,261 +25,9 @@ class GrowthScenario:
     terminal: float
     description: str
 
-@dataclass
-class StageInfo:
-    """公司发展阶段信息"""
-    stage: str
-    confidence: float
-    metrics: Dict
-    key_drivers: List[str]
+# StageInfo现在从stage_identifier模块导入
 
-class CompanyStageIdentifier:
-    """公司发展阶段识别器"""
-    
-    def __init__(self):
-        self.stage_thresholds = {
-            'high_growth': {'revenue_growth': 0.15, 'size_factor': 0.3},
-            'moderate_growth': {'revenue_growth': 0.08, 'size_factor': 0.5},
-            'mature': {'revenue_growth': 0.05, 'size_factor': 0.7},
-            'decline': {'revenue_growth': 0.0, 'size_factor': 1.0}
-        }
-    
-    def identify_stage(self, symbol: str, financial_data: Dict) -> StageInfo:
-        """识别公司发展阶段"""
-        try:
-            # 分析营收增长率
-            revenue_growth = self._analyze_revenue_growth(symbol)
-            
-            # 分析规模因子
-            size_factor = self._calculate_size_factor(financial_data.get('market_cap', 0))
-            
-            # 分析盈利稳定性
-            profitability_stability = self._analyze_profitability_stability(symbol)
-            
-            # 分析现金流质量
-            cash_flow_quality = self._analyze_cash_flow_quality(financial_data)
-            
-            # 综合评分
-            stage_score = self._calculate_stage_score(
-                revenue_growth, size_factor, profitability_stability, cash_flow_quality
-            )
-            
-            # 确定阶段
-            stage = self._determine_stage(stage_score)
-            
-            # 将实际计算的历史增长率传递给financial_data
-            financial_data['historical_growth'] = revenue_growth
-            
-            return StageInfo(
-                stage=stage,
-                confidence=stage_score.get('confidence', 0.5),
-                metrics={
-                    'revenue_growth': revenue_growth,
-                    'size_factor': size_factor,
-                    'profitability_stability': profitability_stability,
-                    'cash_flow_quality': cash_flow_quality
-                },
-                key_drivers=self._identify_key_drivers(stage, stage_score)
-            )
-            
-        except Exception as e:
-            logger.error(f"识别公司发展阶段失败 {symbol}: {e}")
-            return StageInfo(
-                stage='mature',
-                confidence=0.3,
-                metrics={},
-                key_drivers=['数据不足']
-            )
-    
-    def _analyze_revenue_growth(self, symbol: str) -> float:
-        """分析营收增长率"""
-        try:
-            ticker = yf.Ticker(symbol)
-            financials = ticker.financials
-            
-            if financials.empty:
-                return 0.05  # 默认5%
-            
-            # 获取总营收
-            revenue_row = None
-            for idx in financials.index:
-                if 'total revenue' in str(idx).lower() or 'revenue' in str(idx).lower():
-                    revenue_row = financials.loc[idx]
-                    break
-            
-            if revenue_row is None:
-                return 0.05
-            
-            # 计算过去3年平均增长率
-            revenue_values = revenue_row.dropna().sort_index()
-            
-            if len(revenue_values) < 2:
-                return 0.05
-            
-            growth_rates = []
-            for i in range(1, len(revenue_values)):
-                if revenue_values.iloc[i-1] > 0:
-                    growth_rate = (revenue_values.iloc[i] - revenue_values.iloc[i-1]) / revenue_values.iloc[i-1]
-                    growth_rates.append(growth_rate)
-            
-            if not growth_rates:
-                return 0.05
-            
-            avg_growth = float(np.mean(growth_rates))  # 转换为float
-            # 对于极端增长率，给予更宽松的限制
-            return max(min(avg_growth, 2.0), -0.5)  # 限制在-50%到200%之间
-            
-        except Exception as e:
-            logger.error(f"分析营收增长率失败 {symbol}: {e}")
-            return 0.05
-    
-    def _calculate_size_factor(self, market_cap: float) -> float:
-        """计算规模因子 (0-1, 数值越大公司规模越大)"""
-        if market_cap <= 0:
-            return 0.3
-        
-        # 使用对数函数，避免极大值
-        log_cap = np.log10(market_cap)
-        
-        # 市值分级
-        if log_cap < 9:  # < 10亿
-            return 0.1
-        elif log_cap < 10:  # 10-100亿
-            return 0.3
-        elif log_cap < 11:  # 100-1000亿
-            return 0.6
-        elif log_cap < 12:  # 1000-10000亿
-            return 0.8
-        else:  # > 1万亿
-            return 1.0
-    
-    def _analyze_profitability_stability(self, symbol: str) -> float:
-        """分析盈利稳定性"""
-        try:
-            ticker = yf.Ticker(symbol)
-            financials = ticker.financials
-            
-            if financials.empty:
-                return 0.5
-            
-            # 获取净利润
-            net_income_row = None
-            for idx in financials.index:
-                if 'net income' in str(idx).lower():
-                    net_income_row = financials.loc[idx]
-                    break
-            
-            if net_income_row is None:
-                return 0.5
-            
-            net_income_values = net_income_row.dropna().sort_index()
-            
-            if len(net_income_values) < 3:
-                return 0.5
-            
-            # 计算盈利稳定性（变异系数的倒数）
-            if np.mean(net_income_values) != 0:
-                cv = np.std(net_income_values) / abs(np.mean(net_income_values))
-                stability = 1 / (1 + cv)  # 变异系数越小，稳定性越高
-            else:
-                stability = 0.3
-            
-            return max(min(stability, 1.0), 0.0)
-            
-        except Exception as e:
-            logger.error(f"分析盈利稳定性失败 {symbol}: {e}")
-            return 0.5
-    
-    def _analyze_cash_flow_quality(self, financial_data: Dict) -> float:
-        """分析现金流质量"""
-        try:
-            latest_fcf = financial_data.get('latest_fcf', 0)
-            
-            if latest_fcf <= 0:
-                return 0.2
-            elif latest_fcf < 1e9:  # < 10亿
-                return 0.4
-            elif latest_fcf < 5e9:  # 10-50亿
-                return 0.6
-            elif latest_fcf < 20e9:  # 50-200亿
-                return 0.8
-            else:  # > 200亿
-                return 1.0
-                
-        except Exception as e:
-            logger.error(f"分析现金流质量失败: {e}")
-            return 0.5
-    
-    def _calculate_stage_score(self, revenue_growth: float, size_factor: float, 
-                             profitability_stability: float, cash_flow_quality: float) -> Dict:
-        """计算阶段评分"""
-        
-        # 权重分配 - 提高营收增长率权重，降低规模因子权重
-        weights = {
-            'revenue_growth': 0.6,  # 增加营收增长率权重
-            'size_factor': 0.1,     # 降低规模因子权重  
-            'profitability_stability': 0.2,
-            'cash_flow_quality': 0.1
-        }
-        
-        # 标准化评分 - 调整增长率评分标准
-        normalized_scores = {
-            # 更激进的增长率评分：15%为基准，60%+为满分
-            'revenue_growth': min(max(revenue_growth / 0.15, 0), 4) / 4,  
-            # 对于超大市值公司，如果增长率足够高，仍可认为是高成长
-            'size_factor': max(0.3, 1 - size_factor) if revenue_growth > 0.3 else 1 - size_factor,
-            'profitability_stability': profitability_stability,
-            'cash_flow_quality': cash_flow_quality
-        }
-        
-        # 计算加权评分
-        total_score = sum(normalized_scores[key] * weights[key] for key in weights)
-        
-        # 计算置信度
-        confidence = min(sum(1 if score > 0.3 else 0 for score in normalized_scores.values()) / 4, 1.0)
-        
-        return {
-            'total_score': total_score,
-            'confidence': confidence,
-            'individual_scores': normalized_scores,
-            'weights': weights
-        }
-    
-    def _determine_stage(self, stage_score: Dict) -> str:
-        """确定发展阶段"""
-        score = stage_score['total_score']
-        individual_scores = stage_score.get('individual_scores', {})
-        
-        # 特殊规则：如果营收增长率评分很高，即使总分不够也可能是高成长
-        revenue_score = individual_scores.get('revenue_growth', 0)
-        
-        if score >= 0.7 or (revenue_score >= 0.8 and score >= 0.5):
-            return 'high_growth'
-        elif score >= 0.5:
-            return 'moderate_growth'
-        elif score >= 0.3:
-            return 'mature'
-        else:
-            return 'decline'
-    
-    def _identify_key_drivers(self, stage: str, stage_score: Dict) -> List[str]:
-        """识别关键驱动因素"""
-        drivers = []
-        scores = stage_score.get('individual_scores', {})
-        
-        if scores.get('revenue_growth', 0) > 0.6:
-            drivers.append('强劲营收增长')
-        if scores.get('size_factor', 0) > 0.6:
-            drivers.append('较小规模优势')
-        if scores.get('profitability_stability', 0) > 0.6:
-            drivers.append('盈利稳定性')
-        if scores.get('cash_flow_quality', 0) > 0.6:
-            drivers.append('现金流质量')
-        
-        if not drivers:
-            drivers.append('基础面表现一般')
-        
-        return drivers
+# CompanyStageIdentifier现在从stage_identifier模块导入
 
 class DynamicGrowthCalculator:
     """动态增长率计算器"""
@@ -305,59 +56,67 @@ class DynamicGrowthCalculator:
         # 获取分析师预期（仅作为参考，不直接使用）
         analyst_forecast = self._get_analyst_forecast(symbol)
         
-        # 获取历史增长率，但设置合理上限
-        raw_historical_growth = financial_data.get('historical_growth', 0.15)
+        # 🔧 重要修复：使用现金流增长率而非收入增长率
+        raw_historical_growth = financial_data.get('historical_fcf_growth', 0.15)
         
-        # 🔧 关键改进：基于历史增长率的合理性判断，而不是直接限制
-        # 分析师预期可以帮助我们理解增长的可持续性，但不直接作为模型参数
+        # 📊 打印调试信息
+        print(f"📊 {symbol} 增长率分析:")
+        print(f"  历史现金流增长率: {raw_historical_growth:.2%}")
+        print(f"  分析师预期: {analyst_forecast:.2%} (仅供参考)")
         
-        # 如果历史增长率过高，采用更保守的衰减系数
+        # 🔧 关键改进：基于现金流增长率的合理性判断
         if raw_historical_growth > 0.8:  # 80%以上
-            # 超高增长，快速衰减
-            base_growth = min(raw_historical_growth * 0.2, 0.25)  # 更激进的衰减
-            print(f"⚠️ 超高历史增长率 {raw_historical_growth:.1%}，采用激进衰减至 {base_growth:.1%}")
+            # 超高增长，激进衰减
+            base_growth = min(raw_historical_growth * 0.15, 0.20)  # 更激进的衰减
+            print(f"⚠️ 超高现金流增长率 {raw_historical_growth:.1%}，采用激进衰减至 {base_growth:.1%}")
         elif raw_historical_growth > 0.5:  # 50%-80%
             # 高增长，中等衰减
-            base_growth = min(raw_historical_growth * 0.5, 0.25)  # 稍微保守一些
-            print(f"📊 高历史增长率 {raw_historical_growth:.1%}，采用中等衰减至 {base_growth:.1%}")
+            base_growth = min(raw_historical_growth * 0.3, 0.22)  # 保守处理
+            print(f"📊 高现金流增长率 {raw_historical_growth:.1%}，采用中等衰减至 {base_growth:.1%}")
+        elif raw_historical_growth > 0.3:  # 30%-50%
+            # 中等增长，轻微衰减
+            base_growth = min(raw_historical_growth * 0.7, 0.25)
+            print(f"✅ 中等现金流增长率 {raw_historical_growth:.1%}，轻微衰减至 {base_growth:.1%}")
         else:
             # 正常增长率
-            base_growth = raw_historical_growth
-            print(f"✅ 正常历史增长率 {raw_historical_growth:.1%}")
+            base_growth = min(raw_historical_growth, 0.25)
+            print(f"✅ 正常现金流增长率 {raw_historical_growth:.1%}")
         
-        # 行业增长率
-        industry_growth = 0.08  # 默认8%
+        # 行业增长率作为下限
+        industry_growth = 0.06  # 降低默认行业增长率
         
-        # 📈 计算各场景，基于调整后的历史增长率
+        # 📈 计算各场景，基于调整后的现金流增长率
         scenarios = {
             'conservative': GrowthScenario(
                 name='保守场景',
-                years_1_3=min(base_growth * 0.8, 0.15),  # 最高15%
-                years_4_7=min(base_growth * 0.5, 0.12),  # 最高12%
-                years_8_12=min(max(base_growth * 0.3, industry_growth), 0.08),  # 最高8%
+                years_1_3=min(base_growth * 0.7, 0.12),  # 降低上限
+                years_4_7=min(base_growth * 0.5, 0.10),  # 降低上限
+                years_8_12=min(max(base_growth * 0.3, industry_growth), 0.08),  # 降低上限
                 terminal=self.perpetual_growth_rate,
                 description='保守预期，考虑竞争加剧和增长放缓'
             ),
             'base': GrowthScenario(
                 name='基准场景',
-                years_1_3=min(base_growth, 0.20),  # 最高20%
-                years_4_7=min(base_growth * 0.7, 0.15),  # 最高15%
-                years_8_12=min(max(base_growth * 0.4, industry_growth), 0.10),  # 最高10%
+                years_1_3=min(base_growth * 0.9, 0.15),  # 降低上限
+                years_4_7=min(base_growth * 0.6, 0.12),  # 降低上限
+                years_8_12=min(max(base_growth * 0.4, industry_growth), 0.10),  # 降低上限
                 terminal=self.perpetual_growth_rate,
-                description='基于当前趋势的合理预期'
+                description='基于当前现金流趋势的合理预期'
             ),
             'optimistic': GrowthScenario(
                 name='乐观场景',
-                years_1_3=min(base_growth * 1.2, 0.25),  # 最高25%
-                years_4_7=min(base_growth * 0.8, 0.18),  # 最高18%
-                years_8_12=min(max(base_growth * 0.5, industry_growth), 0.12),  # 最高12%
+                years_1_3=min(base_growth, 0.18),  # 降低上限
+                years_4_7=min(base_growth * 0.7, 0.14),  # 降低上限
+                years_8_12=min(max(base_growth * 0.5, industry_growth), 0.12),  # 降低上限
                 terminal=min(self.perpetual_growth_rate * 1.2, 0.03),
                 description='乐观预期，假设公司持续领先'
             )
         }
         
-        # 🔍 输出分析师预期对比（仅供参考）
-        print(f"📊 分析师预期: {analyst_forecast:.1%} (仅作参考，不直接使用)")
+        # 🔍 输出最终场景对比
+        print(f"📊 {symbol} 最终增长率场景:")
+        for name, scenario in scenarios.items():
+            print(f"  {name}: {scenario.years_1_3:.1%} -> {scenario.years_4_7:.1%} -> {scenario.years_8_12:.1%}")
         
         return scenarios
     
@@ -365,29 +124,40 @@ class DynamicGrowthCalculator:
         """温和成长公司的增长率场景"""
         
         analyst_forecast = self._get_analyst_forecast(symbol)
-        historical_growth = financial_data.get('historical_growth', 0.10)
+        # 🔧 使用现金流增长率
+        historical_growth = financial_data.get('historical_fcf_growth', 0.08)
+        
+        print(f"📊 {symbol} 温和成长分析:")
+        print(f"  历史现金流增长率: {historical_growth:.2%}")
+        print(f"  分析师预期: {analyst_forecast:.2%} (仅供参考)")
+        
+        # 对历史现金流增长率进行合理性调整
+        if historical_growth > 0.3:
+            adjusted_growth = min(historical_growth * 0.6, 0.15)
+            print(f"⚠️ 调整过高的现金流增长率: {historical_growth:.2%} -> {adjusted_growth:.2%}")
+            historical_growth = adjusted_growth
         
         scenarios = {
             'conservative': GrowthScenario(
                 name='保守场景',
-                years_1_3=min(analyst_forecast * 0.8, 0.10),
-                years_4_7=max(historical_growth * 0.7, 0.05),
+                years_1_3=min(historical_growth * 0.8, 0.08),
+                years_4_7=min(historical_growth * 0.6, 0.06),
                 years_8_12=0.04,
                 terminal=self.perpetual_growth_rate,
                 description='保守预期，增长逐步放缓'
             ),
             'base': GrowthScenario(
                 name='基准场景',
-                years_1_3=min(analyst_forecast, 0.15),
-                years_4_7=max(historical_growth * 0.9, 0.08),
+                years_1_3=min(historical_growth, 0.12),
+                years_4_7=min(historical_growth * 0.8, 0.08),
                 years_8_12=0.05,
                 terminal=self.perpetual_growth_rate,
-                description='稳健增长预期'
+                description='基于现金流趋势的稳健增长预期'
             ),
             'optimistic': GrowthScenario(
                 name='乐观场景',
-                years_1_3=min(analyst_forecast * 1.1, 0.20),
-                years_4_7=historical_growth,
+                years_1_3=min(historical_growth * 1.1, 0.15),
+                years_4_7=min(historical_growth * 0.9, 0.10),
                 years_8_12=0.06,
                 terminal=self.perpetual_growth_rate,
                 description='乐观预期，保持稳定增长'
@@ -400,12 +170,16 @@ class DynamicGrowthCalculator:
         """成熟公司的增长率场景"""
         
         analyst_forecast = self._get_analyst_forecast(symbol)
-        historical_growth = financial_data.get('historical_growth', 0.05)
+        # 🔧 使用现金流增长率
+        historical_growth = financial_data.get('historical_fcf_growth', 0.03)
+        
+        print(f"📊 {symbol} 成熟期分析:")
+        print(f"  历史现金流增长率: {historical_growth:.2%}")
         
         scenarios = {
             'conservative': GrowthScenario(
                 name='保守场景',
-                years_1_3=min(analyst_forecast * 0.8, 0.05),
+                years_1_3=min(historical_growth * 0.8, 0.04),
                 years_4_7=0.03,
                 years_8_12=self.perpetual_growth_rate,
                 terminal=self.perpetual_growth_rate,
@@ -413,7 +187,7 @@ class DynamicGrowthCalculator:
             ),
             'base': GrowthScenario(
                 name='基准场景',
-                years_1_3=min(analyst_forecast, 0.08),
+                years_1_3=min(historical_growth, 0.06),
                 years_4_7=0.04,
                 years_8_12=self.perpetual_growth_rate,
                 terminal=self.perpetual_growth_rate,
@@ -421,7 +195,7 @@ class DynamicGrowthCalculator:
             ),
             'optimistic': GrowthScenario(
                 name='乐观场景',
-                years_1_3=min(analyst_forecast * 1.1, 0.10),
+                years_1_3=min(historical_growth * 1.2, 0.08),
                 years_4_7=0.05,
                 years_8_12=0.03,
                 terminal=self.perpetual_growth_rate,
