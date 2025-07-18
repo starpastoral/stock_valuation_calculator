@@ -57,7 +57,7 @@ class StockValuationMCP:
                         "properties": {
                             "symbol": {
                                 "type": "string",
-                                "description": "股票代码，如AAPL, GOOGL等"
+                                "description": "股票代码，如AAPL, GOOGL等, 上证需要加.SS, 深证需要加.SZ, 香港需要加.HK"
                             }
                         },
                         "required": ["symbol"]
